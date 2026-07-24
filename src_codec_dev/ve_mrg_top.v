@@ -1,8 +1,3 @@
-// -----------------------------------------------------------------------------
-// Legacy Merge scheduler and cost-selection pipeline.
-// vc_mvp_top still instantiates this module for its Merge path; decoder-native
-// parsed-index selection is implemented separately in vd_mrg_top.
-// -----------------------------------------------------------------------------
 `include "ve_defines.v"
 module	ve_mrg_top
 #(
@@ -260,9 +255,6 @@ assign  dbg_cu_xy       =   {cu_y32, cu_x32,
                              cu_y16, cu_x16};
 // dbg end
 
-// There are six independent candidate-flow lanes:
-// {blk8 cand0/cand1, blk16 cand0/cand1, blk32 cand0/cand1}.  Each lane tracks
-// candidate delivery and the associated MC cost handshake.
 always@(*) begin : fsm_mrg_flow_ns_blk
     integer i;
     for(i=0 ; i<3 ; i++) begin
@@ -316,9 +308,6 @@ always@(*) begin : mvbs_avail
     end
 end
 
-// Motion-detection score uses the two selected candidate MVs for each block
-// size.  One adder is reused for the six configured gain terms over six cycles,
-// then the accumulated score is saturated to eight bits.
 // motion detection start
 assign cand_push_0 = cand_push[0] | cand_push[2] | cand_push[4]; // blk8 | blk16 | blk32
 assign cand_push_1 = cand_push[1] | cand_push[3] | cand_push[5];
@@ -408,8 +397,6 @@ end
 always@(*) begin : fifo_ctrl_blk_sz
     integer i;
     for(i=0 ; i<3 ; i++) begin
-        // Candidate FIFO lanes are interleaved by size: 2*i is cand0 and
-        // 2*i+1 is cand1.  AVC injects its median candidate into blk16/cand0.
         // cand lvl ctrl
         cand_push[i*2+0]   = i == 1 & reg_avc_mode ? avc_mvp_push : cand_rdy[0] & cu_cmd_out_sel[14+i];   // cand0
         cand_push[i*2+1]   = i == 1 & reg_avc_mode ? avc_mvp_push : cand_rdy[1] & cu_cmd_out_sel[14+i];   // cand1
@@ -426,8 +413,6 @@ always@(*) begin : fifo_ctrl_blk_sz
 end
 
 always@(*) begin : cost_q_sel
-    // If cand1 is suppressed as a duplicate, cand0's current MC result is used
-    // directly; otherwise retain cand0 cost while waiting for cand1 cost.
     integer i;
     for(i=0 ; i<3 ; i++) begin
         cost_q[i][0] = cand_diff[i] ? cost_q_reg[i] : mc2mrg_cost_data[i];
@@ -517,8 +502,6 @@ end
 assign	msb_one = find_msb_one(gt0);
 
 always@(*) begin : mrg2ccu_fifo_pp
-	// cand0 completion normally creates the result record.  During termination,
-	// pending edge-count records are flushed from the largest non-empty size.
 	integer i;
     for(i=0 ; i<MAX_BLK_SZ ; i++) begin
 		mrg2ccu_push[i] = (fsm_term_cs[TERM_FLUSH] & msb_one[i]) | cand_pop[2*i+0];
@@ -849,8 +832,6 @@ endgenerate
 
 // state machine
 
-// Evaluate the motion-detection gain serially for each queued block size.  AVC
-// enters at blk16 because its compatibility path does not schedule 8x8/32x32.
 always@(*) begin : fsm_mv_gain
     fsm_mv_gain_ns = 0;
     case(1) // synopsys parallel_case
@@ -896,8 +877,6 @@ always@(*) begin : fsm_mv_gain
     endcase
 end
 
-// Wait for all candidate/cost/output queues before emitting termination data;
-// this prevents the flush record from overtaking an earlier CU.
 always@(*) begin : fsm_terminal_ctrl
     fsm_term_ns = 0;
     case(1) // synopsys parallel_case
@@ -922,8 +901,6 @@ always@(*) begin : fsm_terminal_ctrl
     endcase
 end
 
-// Per block size, hold DONE until both candidate flow lanes have completed and
-// their MC costs have been accepted.
 always@(*) begin : fsm_mc_cand_done
     integer i;
     for(i=0 ; i< 3 ; i++) begin
@@ -1227,8 +1204,6 @@ always@(posedge clk_vc) begin
     end
 end
 
-// Candidate valid bits are sticky across independent cand0/cand1 arrival
-// cycles and clear only after the corresponding MC handshake.
 always@(posedge clk_vc or negedge vc_rst_z) begin : mrg_cand_rdy_0_blk
     integer i;
     if(~vc_rst_z) begin
@@ -1310,9 +1285,6 @@ always@(posedge clk_vc or negedge vc_rst_z) begin : cand_diff_blk
 end
 
 always@(*)begin: cal_mv_diff
-    // cand1 is useful only when its {ref_idx, MV} differs from cand0.  The blk8
-    // lane may additionally apply configured component thresholds to reduce
-    // near-duplicate motion searches; larger lanes use exact equality.
     integer i;
     reg [1:0][1:0] ref_idx;
     reg [1:0][15:0] mvx;

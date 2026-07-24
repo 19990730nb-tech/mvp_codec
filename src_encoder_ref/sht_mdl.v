@@ -1,3 +1,8 @@
+// -----------------------------------------------------------------------------
+// Small parameterized shift-register FIFO used by the MVP control paths.
+// q always exposes the oldest valid entry at mem_cells[0].  full_n/empty_n and
+// their n_* variants describe the current and next-cycle acceptance state.
+// -----------------------------------------------------------------------------
 module sht_mdl
 #(
     parameter DEPTH      = 2,
@@ -36,12 +41,16 @@ reg [DATA_W-1:0]    n_mem_cells [DEPTH-1:0];
 // Combinational Logic
 
 // Control signals
+// A request is accepted only when the current occupancy allows it.  A pop may
+// therefore free a full one-entry FIFO and accept a simultaneous replacement.
 assign g_push   = full_n & push;
 assign g_pop    = empty_n & pop;
 assign q        = mem_cells[0];
 
 // Main block
 generate
+    // DEPTH=1 cannot use a zero-width pointer, so keep its occupancy as a
+    // dedicated flag while preserving the same push/pop behavior.
     if(ADDR_LG2_W == 0 & DEPTH == 1)begin: depth_1_buf
         reg single_full_n;
 
@@ -73,6 +82,8 @@ generate
         end
 
     end else begin: normal_buf
+        // sh_ptr is the number of valid entries; sh_ptr_m1 points at the last
+        // valid cell and avoids subtracting on the simultaneous push/pop path.
         reg     [ADDR_LG2_W:0]   sh_ptr;
         reg     [ADDR_LG2_W-1:0] sh_ptr_m1;
 
@@ -111,6 +122,8 @@ generate
                     pop_en[i]   =   1'b1;
 
                 // push signals
+                // With push and pop together, overwrite the old tail after all
+                // older entries shift toward q; occupancy stays unchanged.
                 case({g_push, g_pop})
                     2'b10:  push_en[i] = i == sh_ptr;
                     2'b11:  push_en[i] = i == sh_ptr_m1;
@@ -168,6 +181,8 @@ endgenerate
 
 // Buffer Block
 generate
+    // RST_EN controls only payload reset.  Occupancy/control state is always
+    // reset above, so stale payload bits can never be observed as valid data.
     if(RST_EN == 1)begin: en_rst_buf
         always@(posedge clk or negedge rstz)begin: buf_blk
             integer i;
