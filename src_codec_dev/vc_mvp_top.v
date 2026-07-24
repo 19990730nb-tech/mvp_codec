@@ -1,9 +1,8 @@
 // -----------------------------------------------------------------------------
 // Top-level integration for the shared MVP subsystem.
 // It combines the legacy Merge pipeline, decoder-capable AMVP pipeline and the
-// common neighbor manager.  reg_avc_mode chooses AVC/HEVC-like behavior while
-// codec_mode independently chooses whether AMVP consumes an actual MV
-// (encoder) or a parsed MVD (decoder).
+// common neighbor manager. reg_avc_mode chooses AVC/HEVC-like behavior while
+// codec_mode selects the protected encoder path or the CCU-driven decoder path.
 // -----------------------------------------------------------------------------
 `include "ve_defines.v"
 module vc_mvp_top
@@ -48,6 +47,7 @@ output[2:0]					mrg2mc_cand_rdy,
 output[2:0][MRG2MC_DW-1:0]	mrg2mc_cand_data,
 output[2:0]                 mrg2mc_cand_nb,
 output[2:0]					mrg2mc_cost_ack,
+output                      irpu2ccu_rdy,
 // CCU
 output[ 2:0]				irpu_amvp_rdy,
 output[2:0][AMVP2CCU_DW-1:0]irpu_amvp_rd,
@@ -82,6 +82,13 @@ input                       reg_avc_mode,
 // [DECODER] Codec direction: 1'b0 = encoder, 1'b1 = decoder.
 // [DECODER] This is independent of reg_avc_mode, which selects AVC/HEVC behavior.
 input                       codec_mode,
+// [DEC] Atomic CCU motion transaction; [0]=X and [1]=Y.
+input                       ccu2irpu_valid,
+input   [1:0][15:0]         ccu2irpu_mvd,
+input   [3:0]               ccu2irpu_ref_idx,
+input                       ccu2irpu_is_skip,
+input                       ccu2irpu_part_mode,
+input   [1:0]               ccu2irpu_sub_idx,
 // CCU
 input	[ 2:0]				irpu_amvp_ack,
 input	[ 2:0]				irpu_mrg_ack,
@@ -95,9 +102,7 @@ input	[15:0]				cur_cu_upd_mvy,
 input	[1:0]				cur_cu_upd_refidx,
 // FME
 input	[ 1:0]				fme2amvp_cand_rdy,
-// [DECODER] codec_mode=0: mvxy is the encoder actual MV.
-// [DECODER] codec_mode=1: mvxy carries the parsed MVD for AVC reconstruction.
-input	[1:0][35:0] 		fme2amvp_cand_mv, // blk_sz (2) + refidx (2) + mvxy/MVD (32)
+input	[1:0][35:0] 		fme2amvp_cand_mv, // encoder: blk_sz (2) + refidx (2) + actual MV (32)
 // MC
 input	[2:0]				mc2mrg_cand_ack,
 input	[2:0]				mc2mrg_cost_rdy,
@@ -163,6 +168,10 @@ wire	[1:0] [41:0]		mrg_col_c;
 wire	[1:0]				mrg_col_c_avail;
 reg		[VC_PIC_X_NB-1:0]   pic_x;
 reg		[VC_PIC_Y_NB-1:0]   pic_y;
+wire    [VC_PIC_X_NB-1:0]   cur_pic_x;
+wire    [VC_PIC_Y_NB-1:0]   cur_pic_y;
+wire    [2:0]               mvp_cu_x;
+wire    [2:0]               mvp_cu_y;
 wire	[1:0][2:0]			cmdq_empty_n;       //0: merge, 1: AMVP
 wire	[2:0]				amvp_blk_sz;
 wire	[2:0]				mrg_blk_sz;
@@ -202,7 +211,76 @@ wire    [1:0]               is_pic_right;
 wire                        is_pic_top16;
 wire                        is_pic_left16;
 
+// [DEC] Encoder Merge outputs are kept private, then muxed with the single
+// reconstructed decoder candidate onto the unchanged MC interface.
+wire    [2:0]                       enc_mrg2mc_cand_rdy;
+wire    [2:0][MRG2MC_DW-1:0]       enc_mrg2mc_cand_data;
+wire    [2:0]                       enc_mrg2mc_cand_nb;
+wire    [2:0]                       enc_mrg2mc_cost_ack;
+wire    [2:0]                       enc_mrg2mc_cand_done;
+wire                                dec_pending;
+wire                                dec_mv_valid;
+wire    [1:0][15:0]                 dec_final_mv;
+wire    [1:0]                       dec_ref_idx;
+wire                                dec_part_mode;
+wire    [1:0]                       dec_sub_idx;
+wire    [2:0]                       dec_cu_x;
+wire    [2:0]                       dec_cu_y;
+wire    [VC_PIC_X_NB-1:0]           dec_pic_x;
+wire    [VC_PIC_Y_NB-1:0]           dec_pic_y;
+wire                                dec_mc_accept;
+reg     [2:0]                       dec_mrg2mc_cand_rdy;
+reg     [2:0][MRG2MC_DW-1:0]       dec_mrg2mc_cand_data;
+reg     [2:0]                       dec_mrg2mc_cand_done;
+wire                                neib_cur_cu_upd;
+wire    [1:0]                       neib_cur_cu_upd_sz;
+wire    [2:0]                       neib_cur_cu_upd_x;
+wire    [2:0]                       neib_cur_cu_upd_y;
+wire    [15:0]                      neib_cur_cu_upd_mvx;
+wire    [15:0]                      neib_cur_cu_upd_mvy;
+wire    [1:0]                       neib_cur_cu_upd_refidx;
+
 //combinational logic
+
+assign  mrg2mc_cand_rdy  = codec_mode ? dec_mrg2mc_cand_rdy  : enc_mrg2mc_cand_rdy;
+assign  mrg2mc_cand_data = codec_mode ? dec_mrg2mc_cand_data : enc_mrg2mc_cand_data;
+assign  mrg2mc_cand_nb   = codec_mode ? 3'b000               : enc_mrg2mc_cand_nb;
+assign  mrg2mc_cost_ack  = codec_mode ? 3'b000               : enc_mrg2mc_cost_ack;
+assign  mrg2mc_cand_done = codec_mode ? dec_mrg2mc_cand_done : enc_mrg2mc_cand_done;
+
+// [DEC] Reuse existing MC output interface. lane0 is 8x8, lane1 is 16x16.
+assign  dec_mc_accept = dec_mv_valid &&
+                        (dec_part_mode ? mc2mrg_cand_ack[0] : mc2mrg_cand_ack[1]);
+
+always@(*) begin : dec_mc_output_mux
+    dec_mrg2mc_cand_rdy  = 0;
+    dec_mrg2mc_cand_data = 0;
+    dec_mrg2mc_cand_done = 0;
+    if(dec_part_mode) begin
+        dec_mrg2mc_cand_rdy[0]  = dec_mv_valid;
+        dec_mrg2mc_cand_done[0] = dec_mc_accept;
+        dec_mrg2mc_cand_data[0] = {1'b1, dec_pic_y, dec_pic_x,
+                                   2'd1, 2'd1, dec_ref_idx,
+                                   dec_final_mv[1], dec_final_mv[0]};
+    end
+    else begin
+        dec_mrg2mc_cand_rdy[1]  = dec_mv_valid;
+        dec_mrg2mc_cand_done[1] = dec_mc_accept;
+        dec_mrg2mc_cand_data[1] = {1'b1, dec_pic_y, dec_pic_x,
+                                   2'd2, 2'd2, dec_ref_idx,
+                                   dec_final_mv[1], dec_final_mv[0]};
+    end
+end
+
+// [DEC] Update neighbor cache on the same accepted MC transaction. Encoder
+// mode retains the original mode-decision update source bit-for-bit.
+assign  neib_cur_cu_upd        = codec_mode ? dec_mc_accept : cur_cu_upd;
+assign  neib_cur_cu_upd_sz     = codec_mode ? (dec_part_mode ? 2'd1 : 2'd2) : cur_cu_upd_sz;
+assign  neib_cur_cu_upd_x      = codec_mode ? dec_cu_x : cur_cu_upd_x;
+assign  neib_cur_cu_upd_y      = codec_mode ? dec_cu_y : cur_cu_upd_y;
+assign  neib_cur_cu_upd_mvx    = codec_mode ? dec_final_mv[0] : cur_cu_upd_mvx;
+assign  neib_cur_cu_upd_mvy    = codec_mode ? dec_final_mv[1] : cur_cu_upd_mvy;
+assign  neib_cur_cu_upd_refidx = codec_mode ? dec_ref_idx : cur_cu_upd_refidx;
 
 // Debug words intentionally expose handshakes and one-hot FSM states rather
 // than payload internals, allowing stalled producer/consumer pairs to be found
@@ -264,16 +342,27 @@ assign  dbg_mvp_out[5]  =   {2'd0,                          //2bits, 31-30
 always@(*) begin : pic_x_y_assign_blk
     // CU coordinates are in 8-pixel units inside a 64x64 CTU; concatenation is
     // therefore equivalent to (ctu*64 + cu*8) without an adder.
-    pic_x   =   {cur_ctu_x[0+:VC_PIC_X_NB-6], cur_cu_x, 3'd0};
-    pic_y   =   {cur_ctu_y[0+:VC_PIC_Y_NB-6], cur_cu_y, 3'd0};
+    pic_x   = codec_mode && dec_pending ? dec_pic_x : cur_pic_x;
+    pic_y   = codec_mode && dec_pending ? dec_pic_y : cur_pic_y;
 end
 
-assign  g_reg_i_slice   =   reg_avc_mode | reg_i_slice;
-assign  is_pic_right    =   {2{{cur_ctu_x[0+:VC_PIC_X_NB-6], cur_cu_x[2:1]} == reg_pic_width_cu_m1[VC_CU_X_NB-1:1]}} &
-                            {1'b1, cur_cu_x[0] == reg_pic_width_cu_m1[0]}   |   {1'b0, {cur_cu_y[0], cur_cu_x[0]} == 3};
+assign  cur_pic_x = {cur_ctu_x[0+:VC_PIC_X_NB-6], cur_cu_x, 3'd0};
+assign  cur_pic_y = {cur_ctu_y[0+:VC_PIC_Y_NB-6], cur_cu_y, 3'd0};
+assign  mvp_cu_x = codec_mode ?
+                   (dec_pending ? dec_cu_x :
+                    cur_cu_x + {2'd0, ccu2irpu_part_mode & ccu2irpu_sub_idx[0]}) :
+                   cur_cu_x;
+assign  mvp_cu_y = codec_mode ?
+                   (dec_pending ? dec_cu_y :
+                    cur_cu_y + {2'd0, ccu2irpu_part_mode & ccu2irpu_sub_idx[1]}) :
+                   cur_cu_y;
 
-assign  is_pic_top16    =   {cur_ctu_y, cur_cu_y[2:1]} == 0;
-assign  is_pic_left16   =   {cur_ctu_x, cur_cu_x}      == 0;
+assign  g_reg_i_slice   =   reg_avc_mode | reg_i_slice;
+assign  is_pic_right    =   {2{{cur_ctu_x[0+:VC_PIC_X_NB-6], mvp_cu_x[2:1]} == reg_pic_width_cu_m1[VC_CU_X_NB-1:1]}} &
+                            {1'b1, mvp_cu_x[0] == reg_pic_width_cu_m1[0]}   |   {1'b0, {mvp_cu_y[0], mvp_cu_x[0]} == 3};
+
+assign  is_pic_top16    =   {cur_ctu_y, mvp_cu_y[2:1]} == 0;
+assign  is_pic_left16   =   {cur_ctu_x, mvp_cu_x}      == 0;
 
 // function/task
 
@@ -307,13 +396,13 @@ U_VE_MRG_TOP
 .cu_cmd_out 			(mrg_cmd_out),
 .neib_cu_start      	(mrg_neib_cu_start),
 .cmdq_empty_n			(cmdq_empty_n[0]),
-.mrg2mc_cand_rdy    	(mrg2mc_cand_rdy),
-.mrg2mc_cand_nb         (mrg2mc_cand_nb),
-.mrg2mc_cand_data   	(mrg2mc_cand_data),
-.mrg2mc_cost_ack    	(mrg2mc_cost_ack),
+.mrg2mc_cand_rdy    	(enc_mrg2mc_cand_rdy),
+.mrg2mc_cand_nb         (enc_mrg2mc_cand_nb),
+.mrg2mc_cand_data   	(enc_mrg2mc_cand_data),
+.mrg2mc_cost_ack    	(enc_mrg2mc_cost_ack),
 .irpu_mrg_rdy       	(irpu_mrg_rdy),
 .irpu_mrg_rd 			(irpu_mrg_rd),
-.mrg2mc_cand_done		(mrg2mc_cand_done),
+.mrg2mc_cand_done		(enc_mrg2mc_cand_done),
 .blk_sz_lat             (blk_sz_lat_mrg),
 .n_blk_sz               (n_blk_sz_mrg),
 .dbg_fsm_mvp_cs			(dbg_fsm_mrg_mvp_cs),
@@ -340,8 +429,8 @@ U_VE_MRG_TOP
 .reg_enc_mrg_mvy_thr    (reg_enc_mrg_mvy_thr),
 .reg_avc_mode           (reg_avc_mode),
 .irpu_mrg_ack       	(irpu_mrg_ack),
-.mc2mrg_cand_ack    	(mc2mrg_cand_ack),
-.mc2mrg_cost_rdy    	(mc2mrg_cost_rdy),
+.mc2mrg_cand_ack    	(codec_mode ? 3'b000 : mc2mrg_cand_ack),
+.mc2mrg_cost_rdy    	(codec_mode ? 3'b000 : mc2mrg_cost_rdy),
 .mc2mrg_cost_data   	(mc2mrg_cost_data),
 .cur_ctu_start      	(cur_ctu_start),
 .cur_ctu_x				(cur_ctu_x),
@@ -384,6 +473,8 @@ vc_amvp_top
 	.MUL_REF				(NUM_REF > 1),
 	.VC_SATD_NB	 			(VC_SATD_NB),
     .VC_SSE_NB	 			(VC_SSE_NB),
+	.VC_PIC_X_NB           (VC_PIC_X_NB),
+	.VC_PIC_Y_NB           (VC_PIC_Y_NB),
 	.MAX_BLK_SZ				(MAX_BLK_SZ), // 3:blk32, 2:blk16
 	.AMVP2CCU_DW			(AMVP2CCU_DW),
 	.FME_BLK8_CMDQ_DEPTH 	(FME_BLK8_CMDQ_DEPTH),
@@ -427,12 +518,32 @@ U_VC_AMVP_TOP
 .reg_avc_mode           (reg_avc_mode),
 // [DECODER] Pass the independent encode/decode direction into AMVP only.
 .codec_mode             (codec_mode),
+.ccu2irpu_valid         (ccu2irpu_valid),
+.irpu2ccu_rdy           (irpu2ccu_rdy),
+.ccu2irpu_mvd           (ccu2irpu_mvd),
+.ccu2irpu_ref_idx       (ccu2irpu_ref_idx),
+.ccu2irpu_is_skip       (ccu2irpu_is_skip),
+.ccu2irpu_part_mode     (ccu2irpu_part_mode),
+.ccu2irpu_sub_idx       (ccu2irpu_sub_idx),
+.dec_mc_accept          (dec_mc_accept),
+.dec_pending            (dec_pending),
+.dec_mv_valid           (dec_mv_valid),
+.dec_final_mv           (dec_final_mv),
+.dec_ref_idx            (dec_ref_idx),
+.dec_part_mode          (dec_part_mode),
+.dec_sub_idx            (dec_sub_idx),
+.dec_cu_x               (dec_cu_x),
+.dec_cu_y               (dec_cu_y),
+.dec_pic_x              (dec_pic_x),
+.dec_pic_y              (dec_pic_y),
 .fme2amvp_cand_rdy		(fme2amvp_cand_rdy),
 .fme2amvp_cand_mv		(fme2amvp_cand_mv),
 .cur_ctu_start      	(cur_ctu_start),
 .cur_cu_start       	(cur_cu_start),
 .cur_cu_x           	(cur_cu_x),
 .cur_cu_y           	(cur_cu_y),
+.cur_pic_x              (cur_pic_x),
+.cur_pic_y              (cur_pic_y),
 .cur_cu_a_avail     	(cur_cu_a_avail),
 .cur_cu_b_avail     	(cur_cu_b_avail),
 .cur_cu_is_skip     	(cur_cu_is_skip),
@@ -513,13 +624,13 @@ U_VC_MVP_GET_NEIB
 .ctuy					(cur_ctu_y),
 .pic_x					(pic_x),
 .pic_y					(pic_y),
-.cur_cu_upd				(cur_cu_upd),
-.cur_cu_upd_sz			(cur_cu_upd_sz),
-.cur_cu_upd_x			(cur_cu_upd_x),
-.cur_cu_upd_y			(cur_cu_upd_y),
-.cur_cu_upd_mvx			(cur_cu_upd_mvx),
-.cur_cu_upd_mvy			(cur_cu_upd_mvy),
-.cur_cu_upd_refidx		(cur_cu_upd_refidx),
+.cur_cu_upd				(neib_cur_cu_upd),
+.cur_cu_upd_sz			(neib_cur_cu_upd_sz),
+.cur_cu_upd_x			(neib_cur_cu_upd_x),
+.cur_cu_upd_y			(neib_cur_cu_upd_y),
+.cur_cu_upd_mvx			(neib_cur_cu_upd_mvx),
+.cur_cu_upd_mvy			(neib_cur_cu_upd_mvy),
+.cur_cu_upd_refidx		(neib_cur_cu_upd_refidx),
 .amvp_cu_start 			(amvp_neib_cu_start),
 .mrg_cu_start  			(mrg_neib_cu_start),
 .amvp_cmd_out			(amvp_cmd_out),
