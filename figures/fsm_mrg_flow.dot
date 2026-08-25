@@ -1,0 +1,73 @@
+digraph fsm_mrg_flow {
+  graph [rankdir=LR, bgcolor="white", pad=0.30, margin=0, nodesep=0.62, ranksep=1.08, splines=spline, outputorder=edgesfirst, forcelabels=true, compound=true, newrank=true, fontname="Arial", fontsize=16, label="ve_mrg_top per-PU Merge flow FSMs", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.35, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  subgraph cluster_c0 {
+    label="candidate 0 instance (idx=0)";
+    labelloc=t;
+    labeljust=l;
+    fontsize=11;
+    fontname="Arial";
+    fontcolor="#46596C";
+    color="#B7C4D1";
+    fillcolor="#F8FAFC";
+    style="rounded,filled";
+    penwidth=1.1;
+    margin=20;
+
+    c0reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+    c0i [label="MRG_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+    c0r [label="MRG_CAND_RDY"];
+    c0m [label="MRG_MC_CAND_RDY", fillcolor="#FBF4DC", color="#A18A48"];
+    c0d [label="MRG_DONE", fillcolor="#F7EBDD", color="#A77B50"];
+
+    c0reset -> c0i [label="!vc_rst_z", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+    c0i -> c0r [label="cand_rdy && blk_en", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c0i -> c0i [label="otherwise", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+    c0r -> c0m [label="mrg2mc_cand_hsk", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c0r -> c0r [label="!mrg2mc_cand_hsk", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+    c0m -> c0d [label="mc2mrg_cost_hsk", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c0m -> c0m [label="!mc2mrg_cost_hsk", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+    c0d -> c0i [label="!cand_diff || candidate1_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+    c0d -> c0d [label="cand_diff && !candidate1_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  }
+
+  subgraph cluster_c1 {
+    label="candidate 1 instance (idx=1)";
+    labelloc=t;
+    labeljust=l;
+    fontsize=11;
+    fontname="Arial";
+    fontcolor="#46596C";
+    color="#B7C4D1";
+    fillcolor="#F8FAFC";
+    style="rounded,filled";
+    penwidth=1.1;
+    margin=20;
+
+    c1reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+    c1i [label="MRG_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+    c1r [label="MRG_CAND_RDY"];
+    c1m [label="MRG_MC_CAND_RDY", fillcolor="#FBF4DC", color="#A18A48"];
+    c1d [label="MRG_DONE", fillcolor="#F7EBDD", color="#A77B50"];
+
+    c1reset -> c1i [label="!vc_rst_z", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+    c1i -> c1r [label="cand_rdy && blk_en", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c1i -> c1i [label="otherwise", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+    c1r -> c1i [label="!cand_diff", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+    c1r -> c1r [label="cand_diff && candidate0_CAND_RDY", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, tailport=n, headport=n];
+    c1r -> c1m [label="cand_diff && !candidate0_CAND_RDY && mrg2mc_cand_hsk", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c1r -> c1r [label="cand_diff && !candidate0_CAND_RDY && !mrg2mc_cand_hsk", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, tailport=s, headport=s];
+    c1m -> c1m [label="candidate0_MC_CAND_RDY", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, tailport=n, headport=n];
+    c1m -> c1d [label="!candidate0_MC_CAND_RDY && mc2mrg_cost_hsk", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+    c1m -> c1m [label="!candidate0_MC_CAND_RDY && !mc2mrg_cost_hsk", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, tailport=s, headport=s];
+    c1d -> c1i [label="unconditional", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+  }
+
+  { rank=same; c0reset; c1reset; }
+  { rank=same; c0i; c1i; }
+  { rank=same; c0r; c1r; }
+  { rank=same; c0m; c1m; }
+  { rank=same; c0d; c1d; }
+}

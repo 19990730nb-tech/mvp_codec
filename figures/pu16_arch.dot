@@ -1,0 +1,30 @@
+digraph pu16_arch {
+  graph [rankdir=LR, fontname="Arial", labelloc=t,
+         label="PU16 (16x16 block-size) RTL path"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f9fc",
+        fontname="Arial", fontsize=10];
+  edge [fontname="Arial", fontsize=9];
+  entry [label="cur_cu_start[1]\nPU16 command", fillcolor="#fff4d6"];
+  mctrl [label="Merge vc_mvp_ctrl\ncommand FIFO[1]"];
+  actrl [label="AMVP vc_mvp_ctrl\ncommand FIFO[1]"];
+  neib [label="shared vc_mvp_get_neib\nA reads: 2\nB reads: 3\nCol reads: 1 or 2"];
+  mgen [label="Merge vc_mvp_cand_gen"];
+  agen [label="AMVP vc_mvp_cand_gen"];
+  mfifo [label="Merge candidate FIFO[2:3]\nflow FSM[2:3]\nMC-done FSM[1]"];
+  afifo [label="AMVP size-1 candidate slots\nU_FME_16_CAND_FIFO"];
+  mout [label="MC/CCU lane 1\nsize fields = 2"];
+  aout [label="FME/AMVP CCU lane 1"];
+  dec [label="AVC decoder non-P8 block\nccu2irpu_part_mode=0"];
+  entry -> mctrl;
+  entry -> actrl;
+  mctrl -> neib [style=dashed, label="non-AVC size context"];
+  actrl -> neib [style=dashed, label="active start"];
+  neib -> mgen [label="A/B/Col/Ref"];
+  neib -> agen [label="A/B/Col/Ref"];
+  mctrl -> mgen [style=dashed, label="cu_blk_en[1]"];
+  actrl -> agen [style=dashed, label="cu_blk_en[1]"];
+  mgen -> mfifo -> mout;
+  agen -> afifo -> aout;
+  dec -> actrl [style=dashed];
+  dec -> afifo [label="MVD"];
+}

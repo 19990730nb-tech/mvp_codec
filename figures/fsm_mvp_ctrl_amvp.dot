@@ -1,0 +1,34 @@
+digraph fsm_mvp_ctrl_amvp {
+  graph [rankdir=TB, bgcolor="white", pad=0.32, margin=0, nodesep=0.78, ranksep=0.82, splines=spline, outputorder=edgesfirst, forcelabels=true, fontname="Arial", fontsize=16, label="vc_mvp_ctrl AMVP FSM (AMVP_OR_MRG=1)", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.65, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  reset     [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D", group=main];
+  idle      [label="AMVP_IDLE", fillcolor="#E8F3EA", color="#6F8F78", group=main];
+  wait_cu   [label="AMVP_WAIT_CU_START", fillcolor="#FBF4DC", color="#A18A48", group=main];
+  wait_neib [label="AMVP_WAIT_NEIB_DONE", fillcolor="#FBF4DC", color="#A18A48", group=main];
+  p8        [label="AMVP_CAND_BLK8", group=main];
+  p16       [label="AMVP_CAND_BLK16", group=main];
+  p32       [label="AMVP_CAND_BLK32", group=main];
+  done      [label="AMVP_BLK_DONE", fillcolor="#F7EBDD", color="#A77B50", group=main];
+
+  reset -> idle [label="!vc_rst_z or reg_slice_go", color="#315B7D", fontcolor="#315B7D", penwidth=1.55, weight=10];
+  idle -> wait_cu [label="cur_ctu_start && !reg_i_slice", color="#315B7D", fontcolor="#315B7D", penwidth=1.55, weight=10];
+  idle -> idle [label="otherwise", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wait_cu -> wait_neib [label="|empty_n", color="#315B7D", fontcolor="#315B7D", penwidth=1.55, weight=10];
+  wait_cu -> wait_cu [label="!|empty_n", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wait_neib -> p8 [label="neib_done_con", color="#315B7D", fontcolor="#315B7D", penwidth=1.55, weight=10];
+  wait_neib -> wait_neib [label="!neib_done_con", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p8 -> p8 [label="!cand_blk_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p8 -> p16 [label="cand_blk_done && empty_n[1]", color="#315B7D", fontcolor="#315B7D", penwidth=1.5, weight=10];
+  p8 -> p32 [label="cand_blk_done && !empty_n[1] && empty_n[2]", constraint=false];
+  p8 -> done [label="cand_blk_done && !empty_n[1] && !empty_n[2]", constraint=false];
+  p16 -> p16 [label="!cand_blk_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p16 -> p32 [label="cand_blk_done && empty_n[2]", color="#315B7D", fontcolor="#315B7D", penwidth=1.5, weight=10];
+  p16 -> done [label="cand_blk_done && !empty_n[2]", constraint=false];
+  p32 -> p32 [label="!cand_blk_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p32 -> done [label="cand_blk_done", color="#315B7D", fontcolor="#315B7D", penwidth=1.55, weight=10];
+  done -> wait_neib [label="!(&chk_ref_done)", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+  done -> idle [label="&chk_ref_done && cux==7 && cuy==7", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=3];
+  done -> wait_cu [label="&chk_ref_done && !(cux==7 && cuy==7)", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+}

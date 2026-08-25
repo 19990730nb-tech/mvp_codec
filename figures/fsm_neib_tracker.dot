@@ -1,0 +1,15 @@
+digraph fsm_neib_tracker {
+  graph [rankdir=LR, bgcolor="white", pad=0.28, margin=0, nodesep=0.72, ranksep=0.92, splines=spline, outputorder=edgesfirst, forcelabels=true, fontname="Arial", fontsize=16, label="vc_mvp_get_neib state tracker (does not gate active outputs)", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.45, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+  idle [label="NEIB_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+  wait [label="NEIB_WAIT_DONE", fillcolor="#FBF4DC", color="#A18A48"];
+
+  reset -> idle [label="!vc_rst_z or reg_slice_go", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> wait [label="cmdq_cu_start", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> idle [label="!cmdq_cu_start", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wait -> idle [label="neib_done_con", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wait -> wait [label="!neib_done_con", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+}

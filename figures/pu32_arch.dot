@@ -1,0 +1,24 @@
+digraph pu32_arch {
+  graph [rankdir=LR, fontname="Arial", labelloc=t,
+         label="PU32 (32x32 block-size) RTL path, default configuration"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f9fc",
+        fontname="Arial", fontsize=10];
+  edge [fontname="Arial", fontsize=9];
+  entry [label="cur_cu_start[2]\nPU32 command", fillcolor="#fff4d6"];
+  mctrl [label="Merge vc_mvp_ctrl\nMAX_BLK_SZ=3\ncommand FIFO[2]"];
+  neib [label="shared vc_mvp_get_neib\nA reads: 3\nB reads: 4\nCol reads: 3"];
+  mgen [label="Merge vc_mvp_cand_gen"];
+  mfifo [label="Merge candidate FIFO[4:5]\nflow FSM[4:5]\nMC-done FSM[2]"];
+  gain [label="shared motion-gain datapath\nMVG_BLK32 phase"];
+  out [label="MC/CCU lane 2\nsize fields = 3"];
+  noamvp [shape=note, fillcolor="#ffe3e3",
+          label="Default vc_amvp_top MAX_BLK_SZ=2:\nno PU32 AMVP/FME/AVC-decoder lane"];
+  entry -> mctrl;
+  mctrl -> neib [style=dashed, label="size context"];
+  neib -> mgen [label="A/B/Col/Ref"];
+  mctrl -> mgen [style=dashed, label="cu_blk_en[2]"];
+  mgen -> mfifo;
+  mfifo -> gain;
+  mfifo -> out;
+  gain -> out [label="md_mvl[2]"];
+}

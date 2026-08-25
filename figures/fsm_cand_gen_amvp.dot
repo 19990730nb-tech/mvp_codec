@@ -1,0 +1,30 @@
+digraph fsm_cand_gen_amvp {
+  graph [rankdir=TB, bgcolor="white", pad=0.30, margin=0, nodesep=0.72, ranksep=0.86, splines=spline, outputorder=edgesfirst, forcelabels=true, fontname="Arial", fontsize=16, label="vc_mvp_cand_gen AMVP FSM", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.55, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+  idle [label="CAND_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+  wa   [label="CAND_WAIT_SCALE_A", fillcolor="#FBF4DC", color="#A18A48"];
+  wb   [label="CAND_WAIT_SCALE_B", fillcolor="#FBF4DC", color="#A18A48"];
+  wc   [label="CAND_WAIT_SCALE_C", fillcolor="#FBF4DC", color="#A18A48"];
+  done [label="CAND_DONE", fillcolor="#F7EBDD", color="#A77B50"];
+
+  { rank=same; wa; wb; wc; }
+
+  reset -> idle [label="!vc_rst_z or reg_slice_go", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> idle [label="!cand_cu_start", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  idle -> wa [label="cand_cu_start && scaled-A selected", color="#315B7D", fontcolor="#315B7D", penwidth=1.45];
+  idle -> wb [label="cand_cu_start && scaled-B selected", color="#315B7D", fontcolor="#315B7D", penwidth=1.45];
+  idle -> wc [label="cand_cu_start && scaled-C selected", color="#315B7D", fontcolor="#315B7D", penwidth=1.45];
+  idle -> done [label="cand_cu_start && no scale wait required"];
+  wa -> wa [label="!scale_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wa -> wc [label="scale_done && next selected source is scaled-C"];
+  wa -> done [label="scale_done && no scaled-C continuation", color="#315B7D", fontcolor="#315B7D", penwidth=1.45];
+  wb -> wb [label="!scale_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wb -> wc [label="scale_done && next selected source is scaled-C"];
+  wb -> done [label="scale_done && no scaled-C continuation", color="#315B7D", fontcolor="#315B7D", penwidth=1.45];
+  wc -> wc [label="!scale_done", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  wc -> done [label="scale_done", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  done -> idle [label="unconditional", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+}

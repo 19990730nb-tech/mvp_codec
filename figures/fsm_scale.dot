@@ -1,0 +1,15 @@
+digraph fsm_scale {
+  graph [rankdir=LR, bgcolor="white", pad=0.28, margin=0, nodesep=0.72, ranksep=0.92, splines=spline, outputorder=edgesfirst, forcelabels=true, fontname="Arial", fontsize=16, label="vc_mvp_scale latency FSM", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.45, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+  idle [label="MULCYC_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+  act  [label="MULCYC_ACT"];
+
+  reset -> idle [label="!vc_rst_z or reg_slice_go", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> act [label="scale_start", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> idle [label="!scale_start", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  act -> idle [label="mul_cyc_cnt == MULCYC", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  act -> act [label="mul_cyc_cnt != MULCYC", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+}

@@ -1,0 +1,24 @@
+digraph fsm_mrg_mv_gain {
+  graph [rankdir=LR, bgcolor="white", pad=0.30, margin=0, nodesep=0.66, ranksep=1.02, splines=spline, outputorder=edgesfirst, forcelabels=true, fontname="Arial", fontsize=16, label="ve_mrg_top motion-gain FSM", labelloc=t, labeljust=c];
+  node [shape=rect, style="rounded,filled", fixedsize=true, width=2.25, height=0.68, fontname="Arial", fontsize=10.5, color="#62758A", fillcolor="#EAF0F6", fontcolor="#263442", penwidth=1.2];
+  edge [fontname="Arial", fontsize=9, color="#4B5563", fontcolor="#374151", penwidth=1.05, arrowsize=0.72];
+
+  reset [shape=point, width=0.13, height=0.13, label="", color="#315B7D", fillcolor="#315B7D"];
+  idle [label="MVG_IDLE", fillcolor="#E8F3EA", color="#6F8F78"];
+  p8   [label="MVG_BLK8"];
+  p16  [label="MVG_BLK16"];
+  p32  [label="MVG_BLK32"];
+
+  reset -> idle [label="!vc_rst_z or reg_slice_go", color="#315B7D", fontcolor="#315B7D", penwidth=1.55];
+  idle -> p16 [label="reg_avc_mode && cand_push[2]"];
+  idle -> p8 [label="!reg_avc_mode && cand_push[1]", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+  idle -> idle [label="otherwise", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p8 -> p8 [label="mvg_cnt != 5", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p8 -> p16 [label="mvg_cnt==5 && cu_empty_n_reg[1]", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+  p8 -> idle [label="mvg_cnt==5 && !cu_empty_n_reg[1]", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p16 -> p16 [label="mvg_cnt != 5", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p16 -> idle [label="mvg_cnt==5 && (reg_avc_mode || !cu_empty_n_reg[2])", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p16 -> p32 [label="mvg_cnt==5 && !reg_avc_mode && cu_empty_n_reg[2]", color="#315B7D", fontcolor="#315B7D", penwidth=1.5];
+  p32 -> p32 [label="mvg_cnt != 5", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false];
+  p32 -> idle [label="mvg_cnt == 5", color="#8A94A3", fontcolor="#626D7A", style=dashed, constraint=false, minlen=2];
+}

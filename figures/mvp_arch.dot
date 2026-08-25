@@ -1,0 +1,384 @@
+digraph mvp_arch {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    pad=0.34,
+    margin=0,
+    nodesep=0.58,
+    ranksep=1.05,
+    splines=spline,
+    outputorder=edgesfirst,
+    forcelabels=true,
+    compound=true,
+    newrank=true,
+    fontname="Arial",
+    fontsize=16,
+    fontcolor="#263442",
+    labelloc=t,
+    labeljust=c,
+    label="MVP RTL architecture (default parameters)"
+  ];
+
+  node [
+    shape=rect,
+    style="rounded,filled",
+    fixedsize=true,
+    width=2.72,
+    height=0.86,
+    margin="0.10,0.07",
+    color="#62758A",
+    fillcolor="#EAF0F6",
+    fontname="Arial",
+    fontsize=10,
+    fontcolor="#263442",
+    penwidth=1.15
+  ];
+
+  edge [
+    color="#4B5563",
+    fontcolor="#374151",
+    fontname="Arial",
+    fontsize=8.8,
+    penwidth=1.05,
+    arrowsize=0.72
+  ];
+
+  cfg [
+    label="REG / CTU / CU\nconfiguration and commands",
+    width=2.62,
+    height=0.78,
+    fillcolor="#FBF4DC",
+    color="#A18A48"
+  ];
+  mem [
+    label="External neighbor memories\nA / B / Col / Ref-list",
+    width=2.62,
+    height=0.78,
+    fillcolor="#FBF4DC",
+    color="#A18A48"
+  ];
+  fme [
+    label="FME",
+    width=1.25,
+    height=0.58,
+    fillcolor="#FBF4DC",
+    color="#A18A48"
+  ];
+  ccu [
+    label="CCU",
+    width=1.25,
+    height=0.58,
+    fillcolor="#FBF4DC",
+    color="#A18A48"
+  ];
+  mc [
+    label="MC",
+    width=1.25,
+    height=0.58,
+    fillcolor="#FBF4DC",
+    color="#A18A48"
+  ];
+
+  subgraph cluster_top {
+    label="vc_mvp_top";
+    labelloc=t;
+    labeljust=l;
+    color="#8EA0B2";
+    fillcolor="#FCFDFE";
+    fontcolor="#3D5063";
+    fontname="Arial";
+    fontsize=12;
+    style="rounded,filled";
+    penwidth=1.25;
+    margin=24;
+
+    subgraph cluster_mrg {
+      label="ve_mrg_top (encoder Merge, PU8/16/32)";
+      labelloc=t;
+      labeljust=l;
+      color="#AEBCCA";
+      fillcolor="#F7FAFC";
+      fontcolor="#46596C";
+      fontname="Arial";
+      fontsize=10.5;
+      style="rounded,filled";
+      penwidth=1.05;
+      margin=18;
+
+      mrg_ctrl [
+        label="vc_mvp_ctrl\nAMVP_OR_MRG=0\n3 command FIFOs",
+        height=0.96,
+        group=mrg
+      ];
+      mrg_gen [
+        label="vc_mvp_cand_gen\nAMVP_OR_MRG=0",
+        group=mrg
+      ];
+      mrg_fifo [
+        label="Per-PU candidate FIFOs\n6 flow FSMs / 3 MC-done FSMs",
+        width=2.95,
+        group=mrg
+      ];
+      mrg_out [
+        label="MC and CCU result queues",
+        group=mrg
+      ];
+
+      mrg_ctrl -> mrg_gen [
+        style=dashed,
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.35,
+        weight=8,
+        label="cand_cu_start / blk select"
+      ];
+      mrg_gen -> mrg_fifo [
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.4,
+        weight=10,
+        label="cand_rdy[1:0], cand_mv"
+      ];
+      mrg_fifo -> mrg_out [
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.4,
+        weight=10,
+        label="candidate / MC cost"
+      ];
+    }
+
+    subgraph cluster_amvp {
+      label="vc_amvp_top (AMVP encoder + AVC decoder)";
+      labelloc=t;
+      labeljust=l;
+      color="#B8B1C7";
+      fillcolor="#FAF8FC";
+      fontcolor="#514B60";
+      fontname="Arial";
+      fontsize=10.5;
+      style="rounded,filled";
+      penwidth=1.05;
+      margin=18;
+
+      amvp_ctrl [
+        label="vc_mvp_ctrl\nAMVP_OR_MRG=1\n2 command FIFOs (default)",
+        height=0.96,
+        fillcolor="#EEF0F7",
+        color="#777B98",
+        group=amvp
+      ];
+      amvp_gen [
+        label="vc_mvp_cand_gen\nAMVP_OR_MRG=1",
+        fillcolor="#EEF0F7",
+        color="#777B98",
+        group=amvp
+      ];
+      rendezvous [
+        label="Per-PU/ref/candidate slots\n+ PU8/PU16 MV/MVD FIFOs",
+        width=2.95,
+        fillcolor="#EEF0F7",
+        color="#777B98",
+        group=amvp
+      ];
+      dec_hold [
+        label="AVC decoder transaction flags\nMVP + MVD result hold",
+        fillcolor="#FBF4DC",
+        color="#A18A48",
+        group=decoder
+      ];
+      amvp_out [
+        label="AMVP CCU queues\nAVC encoder bridge",
+        fillcolor="#EEF0F7",
+        color="#777B98",
+        group=amvp
+      ];
+
+      amvp_ctrl -> amvp_gen [
+        style=dashed,
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.35,
+        weight=8,
+        label="cand_cu_start / ref / blk"
+      ];
+      amvp_gen -> rendezvous [
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.4,
+        weight=10,
+        label="cand_rdy[1:0], cand_mv"
+      ];
+      rendezvous -> amvp_out [
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.4,
+        weight=10,
+        label="encoder join"
+      ];
+      rendezvous -> dec_hold [
+        label="AVC decoder join"
+      ];
+    }
+
+    subgraph cluster_neib {
+      label="vc_mvp_get_neib (physically shared)";
+      labelloc=t;
+      labeljust=l;
+      color="#ABBBAF";
+      fillcolor="#F7FAF7";
+      fontcolor="#46594B";
+      fontname="Arial";
+      fontsize=10.5;
+      style="rounded,filled";
+      penwidth=1.05;
+      margin=18;
+
+      rdmem [
+        label="4 x vc_mvp_rd_mem\nA / B / Col / Ref",
+        fillcolor="#ECF3ED",
+        color="#718778",
+        group=neib
+      ];
+      cache [
+        label="A/B/Col staging registers\nwithin-CTU A/B history",
+        fillcolor="#ECF3ED",
+        color="#718778",
+        group=neib
+      ];
+
+      rdmem -> cache [
+        color="#315B7D",
+        fontcolor="#315B7D",
+        penwidth=1.4,
+        weight=10,
+        label="read data + destination metadata"
+      ];
+    }
+
+    mux [
+      label="codec_mode MC mux\nencoder Merge / AVC decoder",
+      fillcolor="#E7F1F5",
+      color="#607F8D",
+      group=output
+    ];
+  }
+
+  { rank=same; cfg; mem; }
+  { rank=same; mrg_ctrl; rdmem; amvp_ctrl; }
+  { rank=same; cache; fme; }
+  { rank=same; mrg_gen; amvp_gen; }
+  { rank=same; mrg_fifo; rendezvous; }
+  { rank=same; mrg_out; amvp_out; dec_hold; }
+  { rank=same; ccu; mux; }
+
+  cfg -> mrg_ctrl [
+    style=dashed,
+    color="#315B7D",
+    penwidth=1.2
+  ];
+  cfg -> amvp_ctrl [
+    style=dashed,
+    color="#315B7D",
+    penwidth=1.2
+  ];
+  cfg -> cache [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.2,
+    label="CU update"
+  ];
+
+  amvp_ctrl -> rdmem [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    constraint=false,
+    label="cmdq_cu_start (active trigger)"
+  ];
+  mrg_ctrl -> rdmem [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    constraint=false,
+    label="non-AVC size context"
+  ];
+  rdmem -> mem [
+    dir=both,
+    constraint=false,
+    label="req/gnt + rd_lat/data"
+  ];
+  cache -> mrg_gen [
+    color="#4B5563",
+    label="neib/col/ref"
+  ];
+  cache -> amvp_gen [
+    color="#4B5563",
+    label="neib/col/ref"
+  ];
+  rdmem -> mrg_ctrl [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    constraint=false,
+    label="neib_done"
+  ];
+  rdmem -> amvp_ctrl [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    constraint=false,
+    label="neib_done"
+  ];
+
+  fme -> rendezvous [
+    dir=both,
+    label="PU8/16 MV + ack"
+  ];
+  amvp_out -> ccu [
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.35,
+    label="irpu_amvp_*"
+  ];
+  mrg_out -> ccu [
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.35,
+    label="irpu_mrg_*"
+  ];
+  mrg_out -> mux [
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.35,
+    label="encoder candidates"
+  ];
+  dec_hold -> mux [
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.35,
+    label="decoded MV"
+  ];
+  mux -> mc [
+    dir=both,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    penwidth=1.4,
+    label="mrg2mc_* / mc2mrg_ack"
+  ];
+  dec_hold -> cache [
+    style=dashed,
+    color="#315B7D",
+    fontcolor="#315B7D",
+    constraint=false,
+    label="update on dec_mc_accept"
+  ];
+  amvp_out -> mrg_fifo [
+    color="#76548F",
+    fontcolor="#654775",
+    penwidth=1.25,
+    constraint=false,
+    label="AVC encoder avc_mvp_*"
+  ];
+}

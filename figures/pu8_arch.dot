@@ -1,0 +1,30 @@
+digraph pu8_arch {
+  graph [rankdir=LR, fontname="Arial", labelloc=t,
+         label="PU8 (8x8 block-size) RTL path"];
+  node [shape=box, style="rounded,filled", fillcolor="#f7f9fc",
+        fontname="Arial", fontsize=10];
+  edge [fontname="Arial", fontsize=9];
+  entry [label="cur_cu_start[0]\nPU8 command", fillcolor="#fff4d6"];
+  mctrl [label="Merge vc_mvp_ctrl\ncommand FIFO[0]"];
+  actrl [label="AMVP vc_mvp_ctrl\ncommand FIFO[0]"];
+  neib [label="shared vc_mvp_get_neib\nA reads: 0 or 2\nB reads: 0 or 2\nCol reads: 1 or 2"];
+  mgen [label="Merge vc_mvp_cand_gen"];
+  agen [label="AMVP vc_mvp_cand_gen"];
+  mfifo [label="Merge candidate FIFO[0:1]\nflow FSM[0:1]\nMC-done FSM[0]"];
+  afifo [label="AMVP size-0 candidate slots\nU_FME_8_CAND_FIFO"];
+  mout [label="MC/CCU lane 0\nsize fields = 1"];
+  aout [label="FME/AMVP CCU lane 0"];
+  dec [label="AVC decoder P8 sub-block\nccu2irpu_part_mode=1"];
+  entry -> mctrl;
+  entry -> actrl;
+  mctrl -> neib [style=dashed, label="non-AVC size context"];
+  actrl -> neib [style=dashed, label="active start"];
+  neib -> mgen [label="A/B/Col/Ref"];
+  neib -> agen [label="A/B/Col/Ref"];
+  mctrl -> mgen [style=dashed, label="cu_blk_en[0]"];
+  actrl -> agen [style=dashed, label="cu_blk_en[0]"];
+  mgen -> mfifo -> mout;
+  agen -> afifo -> aout;
+  dec -> actrl [style=dashed];
+  dec -> afifo [label="MVD"];
+}
