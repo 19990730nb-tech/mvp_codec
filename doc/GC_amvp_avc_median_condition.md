@@ -1,4 +1,4 @@
-# G05 AMVP AVC Median Condition
+# Golden case: AMVP AVC Median Condition
 
 ## 1. Case Definition
 
