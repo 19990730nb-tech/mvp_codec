@@ -68,6 +68,177 @@ ve_mvp_top
 
 ---
 
+## 1A. 模块互连图
+
+### 1A.1 `ve_mvp_top` 一级模块互连图
+
+> 依据：`ve_mvp_top` 中 `U_VE_MRG_TOP`、`U_VE_AMVP_TOP`、`U_VC_MVP_GET_NEIB` 三个实例的端口连接；箭头方向均表示**信号生产者 -> 消费者**。中途通过 `wire`/`assign` 中转的，直接写在箭头标签内。
+
+```mermaid
+flowchart LR
+    subgraph TOP[ve_mvp_top]
+        MRG[U_VE_MRG_TOP\nve_mrg_top]
+        AMVP[U_VE_AMVP_TOP\nve_amvp_top]
+        NEIB[U_VC_MVP_GET_NEIB\nvc_mvp_get_neib]
+    end
+
+    CCU[TOP CU/CTU inputs]
+    MEM[Neighbor / Col / Ref memory]
+    FME[FME]
+    MC[MC]
+    AMVP_CCU[CCU side\nirpu_amvp_*]
+    MRG_CCU[CCU side\nirpu_mrg_*]
+
+    CCU -->|cur_ctu_start\ncur_cu_start/x/y\ncur_cu_a_avail/b_avail\ncur_cu_is_skip/zmv/terminate| MRG
+    CCU -->|cur_ctu_start\ncur_cu_start/x/y\ncur_cu_a_avail/b_avail\ncur_cu_is_skip/zmv/terminate| AMVP
+    CCU -->|cur_ctu_start\ncur_ctu_x/y\n[comb] pic_x/pic_y\ncur_cu_upd_*| NEIB
+
+    AMVP -->|[wire] amvp_blk_sz\n[wire] amvp_cmd_out\n[wire] cmdq_empty_n[1]\n[wire] amvp_neib_cu_start\n[wire] blk_sz_lat_amvp\n[wire] n_blk_sz_amvp| NEIB
+    NEIB -->|[wire] neib_done_amvp\n[wire] amvp_neib_a/b\n[wire] amvp_col_c/avail\n[wire] reflist_info\n[wire] blk32/16/8_neib_a/b_r| AMVP
+
+    MRG -->|[wire] mrg_blk_sz\n[wire] mrg_cmd_out\n[wire] cmdq_empty_n[0]\n[wire] mrg_neib_cu_start\n[wire] blk_sz_lat_mrg\n[wire] n_blk_sz_mrg| NEIB
+    NEIB -->|[wire] neib_done_mrg\n[wire] mrg_neib_a/b\n[wire] mrg_col_c/avail\n[wire] reflist_info\n[wire] blk32/16/8_neib_a/b_r| MRG
+
+    AMVP -->|[wire] avc_mvp_push\navc_ref_idx\navc_is_long\navc_pocdiff\navc_mvpxy\navc_mvd_gt4| MRG
+
+    FME -->|fme2amvp_cand_rdy\nfme2amvp_cand_mv| AMVP
+    AMVP -->|amvp2fme_cand_ack| FME
+
+    MRG -->|mrg2mc_cand_rdy/nb/data\nmrg2mc_cost_ack| MC
+    MC -->|mc2mrg_cand_ack\nmc2mrg_cost_rdy/data| MRG
+
+    NEIB -->|irpu2neib_a/b_req/addr\nirpu2col_req/addr\nirpu2ref_req/addr| MEM
+    MEM -->|neib_a/b2irpu_gnt/rd_lat/rd\ncol2irpu_gnt/rd_lat/rd\nref2irpu_gnt/rd_lat/rd| NEIB
+
+    AMVP -->|irpu_amvp_rdy/rd/dlat/mv_info| AMVP_CCU
+    AMVP_CCU -->|irpu_amvp_ack| AMVP
+
+    MRG -->|irpu_mrg_rdy/rd| MRG_CCU
+    MRG_CCU -->|irpu_mrg_ack| MRG
+```
+
+### 1A.2 `ve_amvp_top` 内部互连图
+
+> 依据：`ve_amvp_top` 中 `U_VC_AMVP_CTRL`、`U_VC_AMVP_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_FME_*_CAND_FIFO`、`U_AMVP2CCU_FIFO`、`VE_IRPU_EXPG_*` 的例化与端口连接。
+
+```mermaid
+flowchart LR
+    subgraph AMVP_TOP[ve_amvp_top]
+        CTRL[U_VC_AMVP_CTRL\nvc_mvp_ctrl]
+        CAND[U_VC_AMVP_CAND_GEN\nvc_mvp_cand_gen]
+        CFIFO[U_CAND_OUT_FIFO[]\nsht_mdl]
+        F16[U_FME_16_CAND_FIFO\nsht_mdl]
+        F8[U_FME_8_CAND_FIFO\nsht_mdl]
+        COST[VE_IRPU_EXPG_MVD_*\nve_irpu_expg_bits x4]
+        AFIFO[U_AMVP2CCU_FIFO[]\nsht_mdl]
+    end
+
+    NEIB_IN[Neighbor inputs\nneib_done_con\nneib_a/b\ncol_c/avail\nreflist_info\nblk*_neib_*_r]
+    FME_IN[FME side\nfme2amvp_cand_rdy\nfme2amvp_cand_mv]
+    CCU_OUT[CCU side\nirpu_amvp_rdy/rd]
+
+    CTRL -->|[wire] cand_cu_start\n[wire] cur_ref_idx\n[wire] cu_blk_en + cu_cmd_out\n=> [comb] cu_cmd_out_sel| CAND
+    CAND -->|[wire] cand_blk_done\n[wire] cand_blk_idle| CTRL
+
+    NEIB_IN --> CAND
+    FME_IN --> F16
+    FME_IN --> F8
+
+    CAND -->|cand_mv/cand_rdy\n=> [comb] cand_push/cand_d| CFIFO
+    CFIFO -->|cand_q\ncand_empty_n| CAND
+
+    F16 -->|mv_q[1]\nmv_empty_n[1]/mv_full_n[1]| CAND
+    F8 -->|mv_q[0]\nmv_empty_n[0]/mv_full_n[0]| CAND
+    CAND -->|cand_pop[1]| F16
+    CAND -->|cand_pop[0]| F8
+
+    CAND -->|[comb] mvd_cand0/1 x/y| COST
+    COST -->|mvd_cost0/1 x/y| CAND
+
+    CAND -->|[comb] irpu_amvp_wd\namvp2ccu_push\nirpu_amvp_hsk| AFIFO
+    AFIFO -->|irpu_amvp_rdy\nirpu_amvp_rd| CCU_OUT
+```
+
+### 1A.3 `ve_mrg_top` 内部互连图
+
+> 依据：`ve_mrg_top` 中 `U_VC_MRG_CTRL`、`U_VC_MRG_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_MRG2CCU_FIFO` 的例化与端口连接。
+
+```mermaid
+flowchart LR
+    subgraph MRG_TOP[ve_mrg_top]
+        CTRL[U_VC_MRG_CTRL\nvc_mvp_ctrl]
+        CAND[U_VC_MRG_CAND_GEN\nvc_mvp_cand_gen]
+        CFIFO[U_CAND_OUT_FIFO[]\nsht_mdl x6]
+        FLOW[ve_mrg_top local flow FSM\ncomb/reg logic]
+        MFIFO[U_MRG2CCU_FIFO[]\nsht_mdl x3]
+    end
+
+    NEIB_IN[Neighbor inputs\nneib_done_con\nneib_a/b\ncol_c/avail\nreflist_info\nblk*_neib_*_r]
+    MC[MC side\nmc2mrg_* / mrg2mc_*]
+    CCU_OUT[CCU side\nirpu_mrg_rdy/rd]
+
+    CTRL -->|[wire] cand_cu_start\n[wire] cur_ref_idx\n[wire] cu_blk_en + cu_cmd_out\n=> [comb] cu_cmd_out_sel| CAND
+    CAND -->|[wire] cand_blk_done\n[wire] cand_blk_idle| CTRL
+
+    NEIB_IN --> CAND
+    CAND -->|cand_mv/cand_rdy\n=> [comb] cand_push/cand_d| CFIFO
+    CFIFO -->|cand_q\ncand_empty_n| FLOW
+    FLOW -->|cand_pop| CFIFO
+
+    FLOW -->|mrg2mc_cand_rdy/nb/data\nmrg2mc_cost_ack| MC
+    MC -->|mc2mrg_cand_ack\nmc2mrg_cost_rdy/data| FLOW
+
+    FLOW -->|irpu_mrg_wd\nmrg2ccu_push\nirpu_mrg_hsk| MFIFO
+    MFIFO -->|irpu_mrg_rdy\nirpu_mrg_rd| CCU_OUT
+```
+
+### 1A.4 `vc_mvp_get_neib` 内部互连图
+
+> 依据：`vc_mvp_get_neib` 内 4 个 `vc_mvp_rd_mem` 实例与外部 memory 回读、以及本层对 `*_rd` 数据的缓存/选择逻辑。
+
+```mermaid
+flowchart LR
+    subgraph NEIB_TOP[vc_mvp_get_neib]
+        A[U_GET_NEIB_A\nvc_mvp_rd_mem]
+        B[U_GET_NEIB_B\nvc_mvp_rd_mem]
+        C[U_GET_NEIB_C\nvc_mvp_rd_mem]
+        R[U_GET_REFLIST\nvc_mvp_rd_mem]
+        SEL[local reg/comb\nmvp_neib_a_reg\nmvp_neib_b_reg\nmvp_col_c_reg\nreflist_info\nget_neib_* functions]
+    end
+
+    CMD[AMVP/Merge command inputs]
+    MEM[Neighbor / Col / Ref memory]
+    OUT_AMVP[AMVP side outputs]
+    OUT_MRG[Merge side outputs]
+
+    CMD --> A
+    CMD --> B
+    CMD --> C
+    CMD --> R
+
+    A -->|ip2mem_req/addr\ncmdq2ip_info=neib_a_info\nrd_mem_idle=get_neib_a_idle| SEL
+    B -->|ip2mem_req/addr\ncmdq2ip_info=neib_b_info\nrd_mem_idle=get_neib_b_idle| SEL
+    C -->|ip2mem_req/addr\ncmdq2ip_info=col_c_info\nrd_mem_idle=get_neib_c_idle| SEL
+    R -->|ip2mem_req/addr\ncmdq2ip_info=ref_info\nrd_mem_idle=get_ref_idle| SEL
+
+    A -->|req/addr| MEM
+    B -->|req/addr| MEM
+    C -->|req/addr| MEM
+    R -->|req/addr| MEM
+
+    MEM -->|neib_a2irpu_gnt/rd_lat/rd| SEL
+    MEM -->|neib_b2irpu_gnt/rd_lat/rd| SEL
+    MEM -->|col2irpu_gnt/rd_lat/rd| SEL
+    MEM -->|ref2irpu_gnt/rd_lat/rd| SEL
+
+    SEL -->|neib_done_amvp\namvp_neib_a/b\namvp_col_c/avail\nreflist_info\nblk*_neib_*_r| OUT_AMVP
+    SEL -->|neib_done_mrg\nmrg_neib_a/b\nmrg_col_c/avail\nreflist_info\nblk*_neib_*_r| OUT_MRG
+```
+
+> 重要限制：图中 `mrg_cu_start -> vc_mvp_get_neib` 仅表示**端口连接存在**；当前 `vc_mvp_get_neib` 内部 `cmdq_cu_start` 实际写死为 `amvp_cu_start`，见下文 2.7。图不能据此解读为 Merge 能独立启动 Neighbor。
+
+---
+
 ## 2. `ve_mvp_top`：三个一级子模块之间的信号关系
 
 ### 2.1 AMVP -> Neighbor
