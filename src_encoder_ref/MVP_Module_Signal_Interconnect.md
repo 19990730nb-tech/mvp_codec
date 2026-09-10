@@ -72,50 +72,74 @@ ve_mvp_top
 
 ### 1A.1 `ve_mvp_top` 一级模块互连图
 
-> 依据：`ve_mvp_top` 中 `U_VE_MRG_TOP`、`U_VE_AMVP_TOP`、`U_VC_MVP_GET_NEIB` 三个实例的端口连接；箭头方向均表示**信号生产者 -> 消费者**。中途通过 `wire`/`assign` 中转的，直接写在箭头标签内。
+> 依据：`ve_mvp_top.v` 的顶层端口、`pic_x_y_assign_blk`/`g_reg_i_slice`/`is_pic_*` 组合逻辑，以及 `U_VE_MRG_TOP`、`U_VE_AMVP_TOP`、`U_VC_MVP_GET_NEIB` 三个实例端口。图中把“顶层端口直连子模块”和“先经过 `ve_mvp_top` 本层组合逻辑再送子模块”明确分开。
 
 ```mermaid
 flowchart LR
+    CFG["TOP configuration ports"]
+    CUCTU["TOP CU / CTU ports"]
+    UPD["TOP mode-decision update ports<br/>cur_cu_upd signals"]
+    FME["FME interface"]
+    MC["MC interface"]
+    CCU_A["CCU AMVP interface"]
+    CCU_M["CCU Merge interface"]
+    MEM["Neighbor / Col / Ref memory"]
+
     subgraph TOP["ve_mvp_top"]
-        MRG["U_VE_MRG_TOP<br/>ve_mrg_top"]
+        LOCAL["ve_mvp_top local comb logic<br/>pic_x, pic_y<br/>g_reg_i_slice<br/>is_pic_right, is_pic_top16, is_pic_left16"]
         AMVP["U_VE_AMVP_TOP<br/>ve_amvp_top"]
+        MRG["U_VE_MRG_TOP<br/>ve_mrg_top"]
         NEIB["U_VC_MVP_GET_NEIB<br/>vc_mvp_get_neib"]
     end
 
-    CCU["TOP CU / CTU inputs"]
-    MEM["Neighbor / Col / Ref memory"]
-    FME["FME"]
-    MC["MC"]
-    AMVP_CCU["CCU side<br/>irpu_amvp signals"]
-    MRG_CCU["CCU side<br/>irpu_mrg signals"]
+    CFG -->|"direct: reg_i_slice, reg_slice_go, reg_cur_poc<br/>reg_col_l0_flag, reg_col_ref_idx<br/>reg_tmp_mvp_flag, reg_num_ref_l0_act_m1<br/>reg_avc_mode"| AMVP
+    CFG -->|"direct: reg_ctu_sz, reg_cur_poc, reg_slice_go<br/>reg_col_l0_flag, reg_col_ref_idx<br/>reg_tmp_mvp_flag, reg_num_ref_l0_act_m1<br/>reg_mv_gain, reg_enc_cons_mrg<br/>reg_enc_mrg_mvx_thr, reg_enc_mrg_mvy_thr<br/>reg_avc_mode"| MRG
+    CFG -->|"direct: reg_avc_mode, reg_slice_go, reg_i_slice<br/>reg_pic_width_ctu_m1, reg_pic_width_cu_m1<br/>reg_pic_height_cu_m1, reg_num_ref_l0_act_m1<br/>reg_tmp_mvp_flag"| NEIB
+    CFG -->|"reg_avc_mode, reg_i_slice<br/>reg_pic_width_cu_m1"| LOCAL
 
-    CCU -->|"cur_ctu_start<br/>cur_cu_start, x, y<br/>cur_cu_a_avail, cur_cu_b_avail<br/>cur_cu_is_skip, zmv, terminate"| MRG
-    CCU -->|"cur_ctu_start<br/>cur_cu_start, x, y<br/>cur_cu_a_avail, cur_cu_b_avail<br/>cur_cu_is_skip, zmv, terminate"| AMVP
-    CCU -->|"cur_ctu_start<br/>cur_ctu_x, cur_ctu_y<br/>comb: pic_x, pic_y<br/>cur_cu_upd signals"| NEIB
+    CUCTU -->|"direct: cur_ctu_start<br/>cur_cu_start, cur_cu_x, cur_cu_y<br/>cur_cu_a_avail, cur_cu_b_avail<br/>cur_cu_is_skip, cur_cu_is_zmv, cur_cu_terminate"| AMVP
+    CUCTU -->|"direct: cur_ctu_start, cur_ctu_x, cur_ctu_y<br/>cur_cu_start, cur_cu_x, cur_cu_y<br/>cur_cu_a_avail, cur_cu_b_avail<br/>cur_cu_is_skip, cur_cu_is_zmv, cur_cu_terminate"| MRG
+    CUCTU -->|"direct: cur_ctu_start<br/>cur_ctu_x, cur_ctu_y"| NEIB
+    CUCTU -->|"cur_ctu_x, cur_ctu_y<br/>cur_cu_x, cur_cu_y"| LOCAL
 
-    AMVP -->|"wire: amvp_blk_sz<br/>wire: amvp_cmd_out<br/>wire: cmdq_empty_n 1<br/>wire: amvp_neib_cu_start<br/>wire: blk_sz_lat_amvp<br/>wire: n_blk_sz_amvp"| NEIB
-    NEIB -->|"wire: neib_done_amvp<br/>wire: amvp_neib_a, amvp_neib_b<br/>wire: amvp_col_c, amvp_col_c_avail<br/>wire: reflist_info<br/>wire: blk32, blk16, blk8 neighbor cache"| AMVP
+    UPD -->|"direct: cur_cu_upd, cur_cu_upd_sz<br/>cur_cu_upd_x, cur_cu_upd_y<br/>cur_cu_upd_mvx, cur_cu_upd_mvy<br/>cur_cu_upd_refidx"| NEIB
 
-    MRG -->|"wire: mrg_blk_sz<br/>wire: mrg_cmd_out<br/>wire: cmdq_empty_n 0<br/>wire: mrg_neib_cu_start<br/>wire: blk_sz_lat_mrg<br/>wire: n_blk_sz_mrg"| NEIB
-    NEIB -->|"wire: neib_done_mrg<br/>wire: mrg_neib_a, mrg_neib_b<br/>wire: mrg_col_c, mrg_col_c_avail<br/>wire: reflist_info<br/>wire: blk32, blk16, blk8 neighbor cache"| MRG
+    LOCAL -->|"g_reg_i_slice<br/>pic_x, pic_y"| MRG
+    LOCAL -->|"is_pic_right<br/>is_pic_top16<br/>is_pic_left16"| AMVP
+    LOCAL -->|"pic_x, pic_y"| NEIB
 
-    AMVP -->|"wire: avc_mvp_push<br/>avc_ref_idx<br/>avc_is_long<br/>avc_pocdiff<br/>avc_mvpxy<br/>avc_mvd_gt4"| MRG
+    AMVP -->|"wire: amvp_blk_sz<br/>wire: amvp_cmd_out<br/>wire: cmdq_empty_n[1]<br/>wire: amvp_neib_cu_start<br/>wire: blk_sz_lat_amvp<br/>wire: n_blk_sz_amvp"| NEIB
+    MRG -->|"wire: mrg_blk_sz<br/>wire: mrg_cmd_out<br/>wire: cmdq_empty_n[0]<br/>wire: mrg_neib_cu_start<br/>wire: blk_sz_lat_mrg<br/>wire: n_blk_sz_mrg"| NEIB
+
+    NEIB -->|"wire: neib_done_amvp<br/>wire: amvp_neib_a, amvp_neib_b<br/>wire: amvp_col_c, amvp_col_c_avail<br/>wire: reflist_info<br/>wire: blk8/blk16/blk32_neib_a_r,b_r"| AMVP
+    NEIB -->|"wire: neib_done_mrg<br/>wire: mrg_neib_a, mrg_neib_b<br/>wire: mrg_col_c, mrg_col_c_avail<br/>wire: reflist_info<br/>wire: blk8/blk16/blk32_neib_a_r,b_r"| MRG
+
+    AMVP -->|"wire: avc_mvp_push<br/>avc_ref_idx, avc_is_long, avc_pocdiff<br/>avc_mvpxy, avc_mvd_gt4"| MRG
 
     FME -->|"fme2amvp_cand_rdy<br/>fme2amvp_cand_mv"| AMVP
     AMVP -->|"amvp2fme_cand_ack"| FME
 
-    MRG -->|"mrg2mc_cand_rdy, nb, data<br/>mrg2mc_cost_ack"| MC
-    MC -->|"mc2mrg_cand_ack<br/>mc2mrg_cost_rdy, cost_data"| MRG
+    MC -->|"mc2mrg_cand_ack<br/>mc2mrg_cost_rdy, mc2mrg_cost_data"| MRG
+    MRG -->|"mrg2mc_cand_rdy<br/>mrg2mc_cand_nb, mrg2mc_cand_data<br/>mrg2mc_cost_ack, mrg2mc_cand_done"| MC
 
-    NEIB -->|"irpu2neib_a req, addr<br/>irpu2neib_b req, addr<br/>irpu2col req, addr<br/>irpu2ref req, addr"| MEM
-    MEM -->|"neib_a return<br/>neib_b return<br/>col return<br/>ref return"| NEIB
+    CCU_A -->|"irpu_amvp_ack"| AMVP
+    AMVP -->|"irpu_amvp_rdy, irpu_amvp_rd<br/>irpu_amvp_dlat, irpu_amvp_mv_info"| CCU_A
 
-    AMVP -->|"irpu_amvp_rdy, rd, dlat, mv_info"| AMVP_CCU
-    AMVP_CCU -->|"irpu_amvp_ack"| AMVP
+    CCU_M -->|"irpu_mrg_ack"| MRG
+    MRG -->|"irpu_mrg_rdy, irpu_mrg_rd"| CCU_M
 
-    MRG -->|"irpu_mrg_rdy, rd"| MRG_CCU
-    MRG_CCU -->|"irpu_mrg_ack"| MRG
+    NEIB -->|"irpu2neib_a_req, irpu2neib_a_addr<br/>irpu2neib_b_req, irpu2neib_b_addr<br/>irpu2col_req, irpu2col_addr<br/>irpu2ref_req, irpu2ref_addr"| MEM
+    MEM -->|"neib_a2irpu_gnt, neib_a2irpu_rd_lat, neib_a2irpu_rd<br/>neib_b2irpu_gnt, neib_b2irpu_rd_lat, neib_b2irpu_rd<br/>col2irpu_gnt, col2irpu_rd_lat, col2irpu_rd<br/>ref2irpu_gnt, ref2irpu_rd_lat, ref2irpu_rd"| NEIB
 ```
+
+该图只表达 `ve_mvp_top` 层真实可见的端口/内部 net 连接，不把下级模块内部数据流继续展开。需要特别注意：
+
+- `pic_x/pic_y` 不是外部输入，而是 `ve_mvp_top` 根据 `cur_ctu_x/y + cur_cu_x/y` 组合产生，随后送给 `ve_mrg_top` 和 `vc_mvp_get_neib`。
+- `g_reg_i_slice = reg_avc_mode | reg_i_slice`，因此 Merge 的 `reg_i_slice` 输入经过顶层变换；AMVP 与 Neighbor 接收的仍是原始 `reg_i_slice`。
+- `is_pic_right/is_pic_top16/is_pic_left16` 都在顶层组合产生，只送 `ve_amvp_top`。
+- `avc_mvp_push/ref_idx/is_long/pocdiff/mvpxy/mvd_gt4` 的 Producer 是 `ve_amvp_top`，经 `ve_mvp_top` 同名 `wire` 后送入 `ve_mrg_top`，不经过 Neighbor。
+- `reg_num_ref_l1_act_m1` 虽然是 `ve_mvp_top` 输入端口，但当前三个子模块实例均未连接它；因此不画入有效互连图。
+- 顶层 debug 拼接/选择属于观测路径，本图不展开，不应与功能数据路径混画。
 
 ### 1A.2 `ve_amvp_top` 内部互连图
 
@@ -172,36 +196,49 @@ flowchart LR
 
 ### 1A.3 `ve_mrg_top` 内部互连图
 
-> 依据：`ve_mrg_top` 中 `U_VC_MRG_CTRL`、`U_VC_MRG_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_MRG2CCU_FIFO` 的例化与端口连接。
+> 依据：`ve_mrg_top` 中 `U_VC_MRG_CTRL`、`U_VC_MRG_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_MRG2CCU_FIFO` 的实例端口，以及本层 `assign/always/FSM`。图中不把本层组合/寄存器逻辑误画成子模块之间的直接连线。
 
 ```mermaid
 flowchart LR
     subgraph MRG_TOP["ve_mrg_top"]
         CTRL["U_VC_MRG_CTRL<br/>vc_mvp_ctrl"]
         CAND["U_VC_MRG_CAND_GEN<br/>vc_mvp_cand_gen"]
+        LOCAL["ve_mrg_top local logic<br/>cu_cmd_out_sel / cand FIFO ctrl<br/>mrg_cand_rdy / cand_diff / flow FSM<br/>MC handshake / cost compare / cand_sel<br/>motion detection / CCU payload pack"]
         CFIFO["U_CAND_OUT_FIFO array<br/>sht_mdl x 6"]
-        FLOW["ve_mrg_top local flow FSM<br/>comb and reg logic"]
         MFIFO["U_MRG2CCU_FIFO array<br/>sht_mdl x 3"]
     end
 
-    NEIB_IN["Neighbor inputs<br/>neib_done_con<br/>neib_a, neib_b<br/>col_c, col_c_avail<br/>reflist_info<br/>neighbor cache"]
-    MC["MC side<br/>mc2mrg and mrg2mc signals"]
-    CCU_OUT["CCU side<br/>irpu_mrg_rdy, irpu_mrg_rd"]
+    NEIB_CAND["Neighbor candidate inputs<br/>neib_a, neib_b<br/>col_c, col_c_avail<br/>reflist_info"]
+    NEIB_CTRL["Neighbor done<br/>neib_done_con"]
+    NEIB_CACHE["Neighbor cache<br/>blk8 / blk16 / blk32 neib a,b"]
+    AVC_IN["AVC sideband from AMVP<br/>avc_mvp_push / ref_idx / is_long<br/>avc_pocdiff / mvpxy / mvd_gt4"]
+    MC["MC interface<br/>mc2mrg_* / mrg2mc_*"]
+    CCU["CCU interface<br/>irpu_mrg_ack / rdy / rd"]
 
-    CTRL -->|"wire: cand_cu_start<br/>wire: cur_ref_idx<br/>wire: cu_blk_en and cu_cmd_out<br/>comb: cu_cmd_out_sel"| CAND
-    CAND -->|"wire: cand_blk_done<br/>wire: cand_blk_idle"| CTRL
+    NEIB_CTRL --> CTRL
+    NEIB_CAND --> CAND
+    NEIB_CACHE --> LOCAL
 
-    NEIB_IN --> CAND
-    CAND -->|"cand_mv, cand_rdy<br/>comb: cand_push, cand_d"| CFIFO
-    CFIFO -->|"cand_q<br/>cand_empty_n"| FLOW
-    FLOW -->|"cand_pop"| CFIFO
+    CTRL -->|"cand_cu_start<br/>cur_ref_idx"| CAND
+    CTRL -->|"cu_blk_en<br/>cu_cmd_out<br/>cmdq_empty_n"| LOCAL
+    LOCAL -->|"comb: cu_cmd_out_sel"| CAND
+    CAND -->|"cand_blk_done<br/>cand_blk_idle"| CTRL
 
-    FLOW -->|"mrg2mc_cand_rdy, nb, data<br/>mrg2mc_cost_ack"| MC
-    MC -->|"mc2mrg_cand_ack<br/>mc2mrg_cost_rdy, cost_data"| FLOW
+    CAND -->|"cand_mv<br/>cand_rdy"| LOCAL
+    AVC_IN --> LOCAL
 
-    FLOW -->|"irpu_mrg_wd<br/>mrg2ccu_push<br/>irpu_mrg_hsk"| MFIFO
-    MFIFO -->|"irpu_mrg_rdy<br/>irpu_mrg_rd"| CCU_OUT
+    LOCAL -->|"cand_push<br/>cand_d<br/>cand_pop"| CFIFO
+    CFIFO -->|"cand_q<br/>cand_empty_n"| LOCAL
+
+    LOCAL -->|"mrg2mc_cand_rdy<br/>mrg2mc_cand_nb<br/>mrg2mc_cand_data<br/>mrg2mc_cost_ack<br/>mrg2mc_cand_done"| MC
+    MC -->|"mc2mrg_cand_ack<br/>mc2mrg_cost_rdy<br/>mc2mrg_cost_data"| LOCAL
+
+    LOCAL -->|"irpu_mrg_wd<br/>mrg2ccu_push<br/>irpu_mrg_hsk"| MFIFO
+    MFIFO -->|"irpu_mrg_rdy<br/>irpu_mrg_rd"| CCU
+    CCU -->|"irpu_mrg_ack"| LOCAL
 ```
+
+关键点：`vc_mvp_cand_gen` **不直接连接 Candidate FIFO，也不直接连接 MC**。它只输出 `cand_mv/cand_rdy` 到 `ve_mrg_top` 本层；本层再生成 `cand_push/cand_d` 写入 6 个 candidate FIFO。FIFO 的 `cand_q` 回到本层，用于 `mrg2mc_cand_data`、MC cost 对应的 `cand_sel`、MVBS/motion-level 计算以及最终 `irpu_mrg_wd` 打包。`cand_pop` 也是本层根据 MC cost handshake 与 Merge flow FSM 产生，再同时回到两个 candidate FIFO。
 
 ### 1A.4 `vc_mvp_get_neib` 内部互连图
 
@@ -392,7 +429,7 @@ U_CAND_OUT_FIFO.empty_n -> [wire] cand_empty_n[j][i]
 U_CAND_OUT_FIFO.q       -> [wire] cand_q[j][i][45:0]
 ```
 
-随后 `cand_pop/fme_ref_idx` 选择 `cand_q` 中的 `sel_cand_0/sel_cand_1`，再与 FME MV 计算 MVD。这里 `cand_q/cand_empty_n` 的消费者是 `ve_amvp_top` 本层逻辑，不是 `vc_mvp_cand_gen`。
+随后 `cand_pop/fme_ref_idx` 选择 `cand_q` 中的 `sel_cand_0/sel_cand_1`，再与 FME MV 计算 MVD。
 
 ### 3.4 FME -> `sht_mdl` -> AMVP MVD 计算
 
@@ -401,7 +438,7 @@ U_CAND_OUT_FIFO.q       -> [wire] cand_q[j][i][45:0]
 | `fme2amvp_cand_mv[1][33:0]`, `mv_push[1]` | `U_FME_16_CAND_FIFO` | `mv_q[1]`, `mv_empty_n[1]`, `mv_full_n[1]` |
 | `fme2amvp_cand_mv[0][33:0]`, `mv_push[0]` | `U_FME_8_CAND_FIFO` | `mv_q[0]`, `mv_empty_n[0]`, `mv_full_n[0]` |
 
-`mv_q` 与 `cand_q` 选出的预测候选在 `ve_amvp_top` 本层共同生成：
+`mv_q` 与 `cand_q` 选出的预测候选共同生成：
 
 - `mvd_cand0[0/1]`
 - `mvd_cand1[0/1]`
@@ -427,7 +464,7 @@ assign cand_sel = ~reg_avc_mode & (mvdcost_cand0_sum > mvdcost_cand1_sum);
 
 ### 3.6 AMVP -> CCU FIFO
 
-`irpu_amvp_wd` 是 `ve_amvp_top` 本层组合出的 CCU payload，送入每个 `U_AMVP2CCU_FIFO[i]`：
+`irpu_amvp_wd` 是本层组合出的 CCU payload，送入每个 `U_AMVP2CCU_FIFO[i]`：
 
 ```text
 amvp2ccu_push[i] -> FIFO.push
@@ -443,51 +480,167 @@ FIFO.q           -> irpu_amvp_rd[i]
 
 ## 4. `ve_mrg_top` 内部例化关系
 
-源码锚点：`ve_mrg_top.v::U_VC_MRG_CTRL/U_VC_MRG_CAND_GEN/U_CAND_OUT_FIFO/U_MRG2CCU_FIFO`。
+源码锚点：`ve_mrg_top.v::U_VC_MRG_CTRL/U_VC_MRG_CAND_GEN/U_CAND_OUT_FIFO/U_MRG2CCU_FIFO`。以下关系均按“实例端口 -> 本层 wire/reg/logic -> 下一消费者”追踪。
 
-### 4.1 `U_VC_MRG_CTRL <-> U_VC_MRG_CAND_GEN`
+### 4.1 `U_VC_MRG_CTRL` 与 `U_VC_MRG_CAND_GEN`
 
 | Producer | 本层中转 | Consumer | 说明 |
 |---|---|---|---|
-| `U_VC_MRG_CTRL.cand_cu_start` | `[wire] cand_cu_start` | `U_VC_MRG_CAND_GEN.cand_cu_start` | candidate start |
-| `U_VC_MRG_CTRL.cur_ref_idx` | `[wire] cur_ref_idx[3:0]` | `U_VC_MRG_CAND_GEN.cur_ref_idx[1:0]` | 当前 ref |
-| `U_VC_MRG_CTRL.cu_blk_en/cu_cmd_out` | `[wire]` + `[comb] cu_cmd_out_sel` | `U_VC_MRG_CAND_GEN.cu_cmd_out` | 先把 14-bit command 与 one-hot block size 合并为 17 bit |
-| `U_VC_MRG_CAND_GEN.cand_blk_done` | `[wire] cand_blk_done` | `U_VC_MRG_CTRL.cand_blk_done` | candidate 完成反馈 |
-| `U_VC_MRG_CAND_GEN.cand_blk_idle` | `[wire] cand_blk_idle` | `U_VC_MRG_CTRL.cand_blk_idle` | candidate idle 反馈 |
+| `U_VC_MRG_CTRL.cand_cu_start` | `[wire] cand_cu_start` | `U_VC_MRG_CAND_GEN.cand_cu_start` | Candidate FSM 启动 |
+| `U_VC_MRG_CTRL.cur_ref_idx` | `[wire] cur_ref_idx[3:0]` | `U_VC_MRG_CAND_GEN.cur_ref_idx = cur_ref_idx[1:0]` | 当前 ref index |
+| `U_VC_MRG_CTRL.cu_blk_en` + `cu_cmd_out` | `[comb] cu_cmd_out_sel` | `U_VC_MRG_CAND_GEN.cu_cmd_out` | 先在 `ve_mrg_top` 按 block size 选择 command，再拼成 17-bit 输入 |
+| `U_VC_MRG_CAND_GEN.cand_blk_done` | `[wire] cand_blk_done` | `U_VC_MRG_CTRL.cand_blk_done` | Candidate 完成反馈 |
+| `U_VC_MRG_CAND_GEN.cand_blk_idle` | `[wire] cand_blk_idle` | `U_VC_MRG_CTRL.cand_blk_idle` | Candidate idle 反馈 |
+| `neib_done_con` | 顶层 input | `U_VC_MRG_CTRL.neib_done_con` | Neighbor 完成只送 CTRL，不送 cand_gen |
 
-`U_VC_MRG_CTRL` 同时向上一层输出 `cu_blk_en`、`cu_cmd_out`、`neib_cu_start`、`cmdq_empty_n`、`blk_sz_lat`、`n_blk_sz`，再由 `ve_mvp_top` wire 接到 `vc_mvp_get_neib`。
+### 4.2 Neighbor 数据的消费者必须拆开看
 
-### 4.2 Merge Candidate FIFO
-
-`U_VC_MRG_CAND_GEN` 产生 `cand_mv/cand_rdy`，本层生成 `cand_push/cand_d` 后进入 6 个 `U_CAND_OUT_FIFO`：
-
-```text
-cand_mv/cand_rdy
- -> [comb] cand_push[5:0], cand_d[5:0][45:0]
- -> U_CAND_OUT_FIFO[]
- -> cand_empty_n[5:0], cand_q[5:0][45:0]
- -> Merge flow / MC candidate selection
-```
-
-注释定义索引：0/1=blk8 cand0/cand1，2/3=blk16，4/5=blk32。
-
-### 4.3 Merge <-> MC 为顶层直通接口，不再经过子模块
-
-`mrg2mc_cand_rdy/data/nb`、`mrg2mc_cost_ack` 与 `mc2mrg_cand_ack/cost_rdy/cost_data` 都在 `ve_mrg_top` 本层 FSM/组合逻辑处理，然后直接通过 `ve_mvp_top` 顶层端口对外。
-
-因此该路径不存在“另一个 MC 子模块实例”。
-
-### 4.4 Merge -> CCU FIFO
-
-每个 block-size 对应一个 `U_MRG2CCU_FIFO[i]`：
+`ve_mrg_top` 的 Neighbor 输入不是全部送给 `vc_mvp_cand_gen`：
 
 ```text
-mrg2ccu_push[i] -> FIFO.push
-irpu_mrg_wd[i]  -> FIFO.d
-irpu_mrg_hsk[i] -> FIFO.pop
-FIFO.empty_n    -> irpu_mrg_rdy[i]
-FIFO.q          -> irpu_mrg_rd[i]
+neib_a / neib_b / col_c / col_c_avail / reflist_info
+    -> U_VC_MRG_CAND_GEN
+
+neib_done_con
+    -> U_VC_MRG_CTRL
+
+blk8/blk16/blk32_neib_a_r / blk8/blk16/blk32_neib_b_r
+    -> ve_mrg_top local mvbs_* / get_mv_bs logic
+    -> irpu_mrg_wd motion-level fields
 ```
+
+另外 `cur_cu_a_avail/cur_cu_b_avail` 会先在本层寄存为 `blk*_neib_*_avail`，再参与 `get_mv_bs`。
+
+### 4.3 `U_VC_MRG_CAND_GEN -> ve_mrg_top local -> U_CAND_OUT_FIFO`
+
+`U_VC_MRG_CAND_GEN` 的直接输出只有：
+
+```text
+cand_mv[1:0][42:0]
+cand_rdy[1:0]
+cand_blk_done
+cand_blk_idle
+```
+
+Candidate FIFO 的 `push/d/pop` 都不是 cand_gen 端口，而由 `ve_mrg_top` 本层生成：
+
+```verilog
+cand_push[i*2+0] = ... cand_rdy[0] ...;
+cand_push[i*2+1] = ... cand_rdy[1] ...;
+cand_d[i*2+0]    = ... cand_mv[0] ...;
+cand_d[i*2+1]    = ... cand_mv[1] ...;
+cand_pop[i*2+0]  = cand_pop_con[i];
+cand_pop[i*2+1]  = cand_pop_con[i];
+```
+
+因此准确链路是：
+
+```text
+U_VC_MRG_CAND_GEN.cand_mv/cand_rdy
+ -> ve_mrg_top local candidate control
+ -> cand_push/cand_d
+ -> U_CAND_OUT_FIFO[0..5]
+ -> cand_q/cand_empty_n
+ -> ve_mrg_top local flow/cost/payload logic
+```
+
+6 个 FIFO 的索引由源码注释定义为：0/1=blk8 cand0/cand1，2/3=blk16，4/5=blk32。
+
+AVC 模式是本层旁路注入：`avc_mvp_push/ref_idx/is_long/pocdiff/mvpxy/mvd_gt4` 直接参与 `cand_push/cand_d`，不是先进入 `vc_mvp_cand_gen` 再出来。
+
+### 4.4 Candidate ready / MC candidate 发送路径
+
+`cand_rdy` 到 MC 也不是 candgen 直通。`ve_mrg_top` 先把 candidate 有效性寄存到 `mrg_cand_rdy`：
+
+```text
+cand_rdy + cu_cmd_out_sel + cand1_ena
+ -> [reg] mrg_cand_rdy[blk][cand]
+ -> mrg2mc_cand_rdy[blk] = OR(mrg_cand_rdy[blk])
+```
+
+MC payload 再从 candidate FIFO 的 `cand_q` 取值：
+
+```text
+cand_q[2*i+0] / cand_q[2*i+1]
+ + mrg_cand_rdy[i][0]
+ + pic_x_sel / pic_y_sel
+ -> [comb] mrg2mc_cand_data[i]
+ -> MC
+```
+
+`mrg2mc_cand_hsk = mrg2mc_cand_rdy & mc2mrg_cand_ack`，该握手再反馈到 Merge flow FSM 和 `mrg_cand_rdy` 寄存器。
+
+### 4.5 MC cost -> `cand_sel` -> CCU payload
+
+MC 返回的 `mc2mrg_cost_data` 在 `ve_mrg_top` 本层处理；当存在两个不同候选时，第一个 cost 可暂存在 `cost_q_reg`。随后：
+
+```text
+mc2mrg_cost_data / cost_q_reg
+ -> cost_q[0/1]
+ -> compare SATD
+ -> cand_sel
+
+cand_q candidate0/candidate1
+ + cand_sel
+ + selected cost
+ + MVBS / md_mvl
+ -> irpu_mrg_wd
+```
+
+源码中的 `cand_sel` 比较是：
+
+```verilog
+cand_sel[i] =
+    (cost_q[i][1][0+:(VC_SATD_NB+1)] <
+     cost_q[i][0][0+:(VC_SATD_NB+1)]) & cand_diff[i];
+```
+
+也就是说 `cand_sel` 属于 `ve_mrg_top` 本层 cost selection，不属于 `vc_mvp_cand_gen`。
+
+### 4.6 MC cost handshake -> Candidate FIFO pop -> CCU FIFO push
+
+`mrg2mc_cost_ack` 当前固定为 `3'b111`，所以：
+
+```text
+mc2mrg_cost_rdy & mrg2mc_cost_ack
+ -> mc2mrg_cost_hsk
+ -> Merge flow FSM / cand_diff condition
+ -> cand_pop_con
+ -> cand_pop[2*i+0] 与 cand_pop[2*i+1]
+```
+
+正常 candidate 完成时，两路 cand0/cand1 FIFO 对同一个 block size 使用同一个 `cand_pop_con[i]`。
+
+随后：
+
+```verilog
+mrg2ccu_push[i] =
+    (fsm_term_cs[TERM_FLUSH] & msb_one[i]) |
+    cand_pop[2*i+0];
+```
+
+所以正常路径上 candidate FIFO 被 pop 的同时，也触发该 block size 的 `U_MRG2CCU_FIFO` 写入；termination flush 另有独立 push 条件。
+
+### 4.7 `U_MRG2CCU_FIFO` 与 CCU
+
+```text
+ve_mrg_top local irpu_mrg_wd[i] -> FIFO.d
+ve_mrg_top local mrg2ccu_push[i] -> FIFO.push
+irpu_mrg_rdy[i] & irpu_mrg_ack[i]
+    -> [comb] irpu_mrg_hsk[i]
+    -> FIFO.pop
+
+FIFO.empty_n -> irpu_mrg_rdy[i]
+FIFO.q       -> irpu_mrg_rd[i]
+```
+
+因此 `irpu_mrg_wd` 不是 MC 子模块输出，也不是 candgen 直接输出，而是 `ve_mrg_top` 本层把 selected candidate、selected cost、MVBS/motion detection 等字段统一打包后的结果。
+
+### 4.8 Motion detection 是本层旁路计算，不是独立例化模块
+
+`cand_push/cand_d` 同时驱动本层的 `cand_mv0_sel/cand_mv1_sel -> md_mv` 寄存器，之后由 `fsm_mv_gain`、`mvg_cnt` 和加法逻辑生成 `md_mvl[2:0]`。`md_mvl` 最终进入 `irpu_mrg_wd`。
+
+因此图中应把 motion detection 归入 `ve_mrg_top local logic`，不能画成 `vc_mvp_cand_gen -> MC -> CCU` 的简单直通链。
 
 ---
 
@@ -498,10 +651,10 @@ FIFO.q          -> irpu_mrg_rd[i]
 `U_VC_MVP_CAND_PRIOR` 是规则判断层。
 
 ```text
-cand_gen 内部解析的 availability / POC / long-term / col 信息
+candgen 内部解析的 availability / POC / long-term / col 信息
    -> U_VC_MVP_CAND_PRIOR inputs
    -> cand_a[AW-1:0], cand_b[BW-1:0], cand_c[3:0]
-   -> cand_gen FSM/one-hot candidate selection
+   -> candgen FSM/one-hot candidate selection
 ```
 
 关键中转信号：`a0_avail/a1_avail/b0_avail/b1_avail/b2_avail`、`c0_avail/c1_avail`、`n_cur_poc_diff`、`cur_ref_poc/ref_long`、各 A/B POC/long、C0/C1 pocdiff/intra/long。
@@ -739,12 +892,9 @@ CU/CTU input
  -> ve_amvp_top/U_VC_AMVP_CAND_GEN
  -> vc_mvp_cand_prior (+ vc_mvp_scale when enabled)
  -> cand_mv/cand_rdy
- -> ve_amvp_top local FIFO control
  -> candidate FIFO
- -> ve_amvp_top local selection + FME MV -> MVD
- -> ve_irpu_expg_bits -> mvd_cost
- -> ve_amvp_top local cost compare -> cand_sel
- -> local CCU payload pack
+ -> FME MV + MVP candidate -> MVD
+ -> ve_irpu_expg_bits cost
  -> AMVP2CCU FIFO
  -> irpu_amvp_rdy/rd
 ```
@@ -794,4 +944,4 @@ AMVP/command state
 6. `vc_mvp_ctrl.v`: `ccu_cmdq`
 7. `vc_mvp_rd_mem.v`: `mem_cmd_fifo`
 
-后续若继续修图，必须先从对应实例端口和本层 `assign/always` 重建网表，不从功能经验反推连线。
+如果后续要画模块互连图，应直接以上述表格作为网表依据，不从功能经验反推连线。
