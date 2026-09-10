@@ -119,13 +119,14 @@ flowchart LR
 
 ### 1A.2 `ve_amvp_top` 内部互连图
 
-> 依据：`ve_amvp_top` 中 `U_VC_AMVP_CTRL`、`U_VC_AMVP_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_FME_*_CAND_FIFO`、`U_AMVP2CCU_FIFO`、`VE_IRPU_EXPG_*` 的例化与端口连接。
+> 依据：`ve_amvp_top` 中 `U_VC_AMVP_CTRL`、`U_VC_AMVP_CAND_GEN`、`U_CAND_OUT_FIFO`、`U_FME_*_CAND_FIFO`、`U_AMVP2CCU_FIFO`、`VE_IRPU_EXPG_*` 的实例端口及本层 `assign/always`。图中特别区分“子模块之间直接连线”和“先回到 `ve_amvp_top` 本层组合逻辑再继续流转”。
 
 ```mermaid
 flowchart LR
     subgraph AMVP_TOP["ve_amvp_top"]
         CTRL["U_VC_AMVP_CTRL<br/>vc_mvp_ctrl"]
         CAND["U_VC_AMVP_CAND_GEN<br/>vc_mvp_cand_gen"]
+        LOCAL["ve_amvp_top local logic<br/>cu_cmd_out_sel / cand FIFO control<br/>MVD calc / cost compare / cand_sel<br/>CCU payload pack"]
         CFIFO["U_CAND_OUT_FIFO array<br/>sht_mdl"]
         F16["U_FME_16_CAND_FIFO<br/>sht_mdl"]
         F8["U_FME_8_CAND_FIFO<br/>sht_mdl"]
@@ -133,31 +134,41 @@ flowchart LR
         AFIFO["U_AMVP2CCU_FIFO array<br/>sht_mdl"]
     end
 
-    NEIB_IN["Neighbor inputs<br/>neib_done_con<br/>neib_a, neib_b<br/>col_c, col_c_avail<br/>reflist_info<br/>neighbor cache"]
-    FME_IN["FME side<br/>fme2amvp_cand_rdy<br/>fme2amvp_cand_mv"]
-    CCU_OUT["CCU side<br/>irpu_amvp_rdy, irpu_amvp_rd"]
+    NEIB_IN["Neighbor inputs<br/>neib_a, neib_b<br/>col_c, col_c_avail<br/>reflist_info<br/>neighbor cache"]
+    FME_IN["FME input<br/>fme2amvp_cand_rdy<br/>fme2amvp_cand_mv"]
+    CCU_OUT["CCU interface<br/>irpu_amvp_ack / rdy / rd"]
+    AVC_OUT["AVC sideband outputs<br/>avc_mvp_push / ref_idx / is_long<br/>avc_pocdiff / mvpxy / mvd_gt4"]
 
-    CTRL -->|"wire: cand_cu_start<br/>wire: cur_ref_idx<br/>wire: cu_blk_en and cu_cmd_out<br/>comb: cu_cmd_out_sel"| CAND
-    CAND -->|"wire: cand_blk_done<br/>wire: cand_blk_idle"| CTRL
+    CTRL -->|"cand_cu_start<br/>cur_ref_idx"| CAND
+    CTRL -->|"cu_blk_en<br/>cu_cmd_out<br/>cur_ref_idx"| LOCAL
+    LOCAL -->|"comb: cu_cmd_out_sel"| CAND
+    CAND -->|"cand_blk_done<br/>cand_blk_idle"| CTRL
 
     NEIB_IN --> CAND
-    FME_IN --> F16
-    FME_IN --> F8
 
-    CAND -->|"cand_mv, cand_rdy<br/>comb: cand_push, cand_d"| CFIFO
-    CFIFO -->|"cand_q<br/>cand_empty_n"| CAND
+    CAND -->|"cand_mv<br/>cand_rdy"| LOCAL
+    LOCAL -->|"cand_push<br/>cand_d<br/>cand_pop"| CFIFO
+    CFIFO -->|"cand_q<br/>cand_empty_n"| LOCAL
 
-    F16 -->|"mv_q 1<br/>mv_empty_n 1, mv_full_n 1"| CAND
-    F8 -->|"mv_q 0<br/>mv_empty_n 0, mv_full_n 0"| CAND
-    CAND -->|"cand_pop 1"| F16
-    CAND -->|"cand_pop 0"| F8
+    FME_IN -->|"fme2amvp_cand_mv"| F16
+    FME_IN -->|"fme2amvp_cand_mv"| F8
+    FME_IN -->|"fme2amvp_cand_rdy"| LOCAL
+    LOCAL -->|"mv_push<br/>cand_pop"| F16
+    LOCAL -->|"mv_push<br/>cand_pop"| F8
+    F16 -->|"mv_q<br/>mv_empty_n<br/>mv_full_n"| LOCAL
+    F8 -->|"mv_q<br/>mv_empty_n<br/>mv_full_n"| LOCAL
 
-    CAND -->|"comb: mvd_cand0 and mvd_cand1, X and Y"| COST
-    COST -->|"mvd_cost0 and mvd_cost1, X and Y"| CAND
+    LOCAL -->|"mvd_cand0 X/Y<br/>mvd_cand1 X/Y"| COST
+    COST -->|"mvd_cost0 X/Y<br/>mvd_cost1 X/Y"| LOCAL
 
-    CAND -->|"comb: irpu_amvp_wd<br/>amvp2ccu_push<br/>irpu_amvp_hsk"| AFIFO
+    LOCAL -->|"irpu_amvp_wd<br/>amvp2ccu_push<br/>irpu_amvp_hsk"| AFIFO
     AFIFO -->|"irpu_amvp_rdy<br/>irpu_amvp_rd"| CCU_OUT
+    CCU_OUT -->|"irpu_amvp_ack"| LOCAL
+
+    LOCAL --> AVC_OUT
 ```
+
+关键点：`VE_IRPU_EXPG_MVD_*` 的 `mvd_cost*` **不会回送 `vc_mvp_cand_gen`**。它们只回到 `ve_amvp_top` 本层，先形成 `mvdcost_cand0_sum/mvdcost_cand1_sum`，再比较得到 `cand_sel`；`cand_sel` 随后选择写入 `irpu_amvp_wd` 的 MVD、long-term、POC-diff 等字段。AVC 模式下 `cand_sel = 0`，即固定选择 candidate 0。
 
 ### 1A.3 `ve_mrg_top` 内部互连图
 
@@ -357,7 +368,7 @@ assign g_cmdq_empty_n = cmdq_empty_n[reg_avc_mode];
 
 这是 AMVP scheduler 与 candidate FSM 的闭环握手。
 
-### 3.3 Candidate Generator -> Candidate FIFO
+### 3.3 Candidate Generator -> `ve_amvp_top` 本层逻辑 -> Candidate FIFO
 
 `U_VC_AMVP_CAND_GEN` 输出：
 
@@ -381,7 +392,7 @@ U_CAND_OUT_FIFO.empty_n -> [wire] cand_empty_n[j][i]
 U_CAND_OUT_FIFO.q       -> [wire] cand_q[j][i][45:0]
 ```
 
-随后 `cand_pop/fme_ref_idx` 选择 `cand_q` 中的 `sel_cand_0/sel_cand_1`，再与 FME MV 计算 MVD。
+随后 `cand_pop/fme_ref_idx` 选择 `cand_q` 中的 `sel_cand_0/sel_cand_1`，再与 FME MV 计算 MVD。这里 `cand_q/cand_empty_n` 的消费者是 `ve_amvp_top` 本层逻辑，不是 `vc_mvp_cand_gen`。
 
 ### 3.4 FME -> `sht_mdl` -> AMVP MVD 计算
 
@@ -390,12 +401,12 @@ U_CAND_OUT_FIFO.q       -> [wire] cand_q[j][i][45:0]
 | `fme2amvp_cand_mv[1][33:0]`, `mv_push[1]` | `U_FME_16_CAND_FIFO` | `mv_q[1]`, `mv_empty_n[1]`, `mv_full_n[1]` |
 | `fme2amvp_cand_mv[0][33:0]`, `mv_push[0]` | `U_FME_8_CAND_FIFO` | `mv_q[0]`, `mv_empty_n[0]`, `mv_full_n[0]` |
 
-`mv_q` 与 `cand_q` 选出的预测候选共同生成：
+`mv_q` 与 `cand_q` 选出的预测候选在 `ve_amvp_top` 本层共同生成：
 
 - `mvd_cand0[0/1]`
 - `mvd_cand1[0/1]`
 
-### 3.5 MVD -> `ve_irpu_expg_bits`
+### 3.5 `ve_amvp_top` MVD -> `ve_irpu_expg_bits` -> 本层 `cand_sel` 比较
 
 | Producer | Consumer | Output |
 |---|---|---|
@@ -404,11 +415,19 @@ U_CAND_OUT_FIFO.q       -> [wire] cand_q[j][i][45:0]
 | `mvd_cand1[0]` | `VE_IRPU_EXPG_MVD_CAND1_X.val_in` | `mvd_cost1[0]` |
 | `mvd_cand1[1]` | `VE_IRPU_EXPG_MVD_CAND1_Y.val_in` | `mvd_cost1[1]` |
 
-这里是纯组合子模块：`val_in -> val_out`，无时钟握手。
+这里是纯组合子模块：`val_in -> val_out`，无时钟握手。四路 `mvd_cost*` 的消费者是 `ve_amvp_top` 本层逻辑，而不是 `vc_mvp_cand_gen`：
+
+```verilog
+assign mvdcost_cand0_sum = mvd_cost0[0] + mvd_cost0[1];
+assign mvdcost_cand1_sum = mvd_cost1[0] + mvd_cost1[1];
+assign cand_sel = ~reg_avc_mode & (mvdcost_cand0_sum > mvdcost_cand1_sum);
+```
+
+随后 `cand_sel` 只在 `ve_amvp_top` 本层参与 `irpu_amvp_wd` 字段选择；AVC 模式下由于 `~reg_avc_mode=0`，`cand_sel` 固定为 0。
 
 ### 3.6 AMVP -> CCU FIFO
 
-`irpu_amvp_wd` 是本层组合出的 CCU payload，送入每个 `U_AMVP2CCU_FIFO[i]`：
+`irpu_amvp_wd` 是 `ve_amvp_top` 本层组合出的 CCU payload，送入每个 `U_AMVP2CCU_FIFO[i]`：
 
 ```text
 amvp2ccu_push[i] -> FIFO.push
@@ -720,9 +739,12 @@ CU/CTU input
  -> ve_amvp_top/U_VC_AMVP_CAND_GEN
  -> vc_mvp_cand_prior (+ vc_mvp_scale when enabled)
  -> cand_mv/cand_rdy
+ -> ve_amvp_top local FIFO control
  -> candidate FIFO
- -> FME MV + MVP candidate -> MVD
- -> ve_irpu_expg_bits cost
+ -> ve_amvp_top local selection + FME MV -> MVD
+ -> ve_irpu_expg_bits -> mvd_cost
+ -> ve_amvp_top local cost compare -> cand_sel
+ -> local CCU payload pack
  -> AMVP2CCU FIFO
  -> irpu_amvp_rdy/rd
 ```
@@ -772,4 +794,4 @@ AMVP/command state
 6. `vc_mvp_ctrl.v`: `ccu_cmdq`
 7. `vc_mvp_rd_mem.v`: `mem_cmd_fifo`
 
-如果后续要画模块互连图，应直接以上述表格作为网表依据，不从功能经验反推连线。
+后续若继续修图，必须先从对应实例端口和本层 `assign/always` 重建网表，不从功能经验反推连线。
