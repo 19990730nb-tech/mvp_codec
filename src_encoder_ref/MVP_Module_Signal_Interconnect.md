@@ -285,6 +285,86 @@ flowchart LR
 
 > 重要限制：图中 `mrg_cu_start -> vc_mvp_get_neib` 仅表示**端口连接存在**；当前 `vc_mvp_get_neib` 内部 `cmdq_cu_start` 实际写死为 `amvp_cu_start`，见下文 2.7。图不能据此解读为 Merge 能独立启动 Neighbor。
 
+
+---
+
+## 1B. AVC 模式（`reg_avc_mode=1`）有效信号通路
+
+> 本图只画当前 RTL 在 `reg_avc_mode=1` 时可从源码直接确认的有效通路。主链入口要求原始 `reg_i_slice=0`，且 `vc_mvp_ctrl` 的 AMVP command queue 对 `cur_cu_is_skip=1` 或 `cur_cu_terminate=1` 不产生 `push`；因此下图描述的是实际进入 AMVP 候选生成流程的 AVC inter transaction。对于 skip/terminate，当前这些模块中未看到另一条等价启动链，本文不凭经验补画。
+
+```mermaid
+flowchart LR
+    IN["CU / FME inputs<br/>reg_avc_mode = 1"]
+    TOP["ve_mvp_top local mode logic<br/>g_reg_i_slice = 1"]
+
+    subgraph AMVP_PATH["AVC AMVP active path"]
+        ACTRL["U_VC_AMVP_CTRL<br/>vc_mvp_ctrl"]
+        NEIB["U_VC_MVP_GET_NEIB<br/>AMVP-selected command path"]
+        ACAND["U_VC_AMVP_CAND_GEN<br/>AVC shortened candidate path"]
+        ALOCAL["ve_amvp_top local logic<br/>candidate FIFO / FME FIFO<br/>MVD calculation<br/>cand_sel forced to 0"]
+        EXPG["ve_irpu_expg_bits x 4<br/>mvd_cost computed"]
+        AFIFO["U_AMVP2CCU_FIFO<br/>AMVP result"]
+    end
+
+    MEM["Neighbor / Col / Ref memory"]
+    CCU_A["CCU AMVP interface"]
+
+    subgraph MRG_PATH["AVC Merge-side transport path"]
+        MBYP["U_VC_MRG_CTRL + U_VC_MRG_CAND_GEN<br/>legacy Merge path not started"]
+        MINJ["ve_mrg_top AVC local injection<br/>block index i = 1 only"]
+        MFIFO["U_CAND_OUT_FIFO<br/>cand_q 2 = AVC MVP payload<br/>cand_q 3 low 8 = avc_mvd_gt4"]
+        MLOCAL["ve_mrg_top local logic<br/>MC handshake / cost / cand_sel<br/>irpu_mrg_wd pack"]
+        OUTFIFO["U_MRG2CCU_FIFO index 1"]
+    end
+
+    MC["MC interface index 1"]
+    CCU_M["CCU Merge interface"]
+
+    IN -->|"cur_cu_start / CU info"| ACTRL
+    IN -->|"fme2amvp_cand_rdy<br/>fme2amvp_cand_mv"| ALOCAL
+    IN --> TOP
+
+    TOP -.->|"g_reg_i_slice = 1"| MBYP
+
+    ACTRL -->|"amvp_neib_cu_start<br/>amvp_cmd_out<br/>cmdq_empty_n 1"| NEIB
+    NEIB -->|"neib_done_amvp"| ACTRL
+    NEIB -->|"irpu2neib / col / ref request"| MEM
+    MEM -->|"gnt / rd_lat / rd"| NEIB
+    NEIB -->|"amvp_neib_a, amvp_neib_b<br/>amvp_col_c, amvp_col_c_avail<br/>reflist_info"| ACAND
+
+    ACTRL -->|"cand_cu_start<br/>cur_ref_idx"| ACAND
+    ACTRL -->|"cu_blk_en<br/>cu_cmd_out"| ALOCAL
+    ALOCAL -->|"cu_cmd_out_sel"| ACAND
+    ACAND -->|"cand_mv index 0<br/>cand_rdy index 0"| ALOCAL
+    ACAND -->|"cand_blk_done / cand_blk_idle"| ACTRL
+
+    ALOCAL -->|"mvd_cand0 and mvd_cand1"| EXPG
+    EXPG -.->|"mvd_cost0 / mvd_cost1<br/>decision disabled because cand_sel = 0"| ALOCAL
+
+    ALOCAL -->|"irpu_amvp_wd<br/>amvp2ccu_push"| AFIFO
+    AFIFO -->|"irpu_amvp_rdy / irpu_amvp_rd"| CCU_A
+
+    ALOCAL -->|"avc_mvp_push = amvp2ccu_push 1<br/>avc_ref_idx / avc_is_long / avc_pocdiff<br/>avc_mvpxy / avc_mvd_gt4"| MINJ
+    MINJ -->|"cand_push 2 and cand_push 3<br/>cand_d 2 and cand_d 3"| MFIFO
+
+    MFIFO -->|"cand_q 2 / cand_q 3"| MLOCAL
+    MLOCAL -->|"mrg2mc_cand_rdy 1<br/>mrg2mc_cand_data 1"| MC
+    MC -->|"mc2mrg_cand_ack 1<br/>mc2mrg_cost_rdy 1<br/>mc2mrg_cost_data 1"| MLOCAL
+    MLOCAL -->|"cand_pop 2 / cand_pop 3"| MFIFO
+
+    MLOCAL -->|"irpu_mrg_wd 1<br/>mrg2ccu_push 1"| OUTFIFO
+    OUTFIFO -->|"irpu_mrg_rdy 1<br/>irpu_mrg_rd 1"| CCU_M
+```
+
+### 1B.1 源码约束与旁路点
+
+- `ve_mvp_top` 中 `g_reg_i_slice = reg_avc_mode | reg_i_slice`。因此 `reg_avc_mode=1` 时，`ve_mrg_top.reg_i_slice` 恒为 1；其内部 `U_VC_MRG_CTRL` 的启动/command-queue `push` 条件依赖 `~reg_i_slice`，所以传统 Merge control -> `vc_mvp_cand_gen` 路径不会成为 AVC 主通路。
+- `vc_mvp_get_neib` 当前固定 `cmdq_cu_start = amvp_cu_start`、`cu_cmd_out = amvp_cmd_out[0]`；同时 `g_cmdq_empty_n = cmdq_empty_n[reg_avc_mode]`，在 AVC 模式下即选择 `cmdq_empty_n[1]`。因此 Neighbor 主控制归 AMVP 路径。
+- `vc_mvp_cand_gen` 的 AMVP 分支在 AVC 下由 `reg_avc_mode` 使 candidate FSM 从 `CAND_IDLE` 直接转到 `CAND_DONE`，并强制 `cand1_sel_onehot = 0`，所以 `cand_rdy[1]=0`；candidate 0 由 A/B 空间邻居条件选择 `UA / Z0 / MED`。
+- `ve_amvp_top` 中四个 `ve_irpu_expg_bits` 仍会计算 `mvd_cost*`，但 `cand_sel = ~reg_avc_mode & (...)`，因此 AVC 模式下 `cand_sel` 明确为 0；这些 cost 不再参与 candidate 选择结果。
+- AMVP -> Merge 的 AVC 旁路只由 `avc_mvp_push = reg_avc_mode & amvp2ccu_push[1]` 触发，因此注入 `ve_mrg_top` 的是 block index 1 路径。`ve_mrg_top` 在 AVC 下令 `cand_push[2]` 和 `cand_push[3]` 同时等于 `avc_mvp_push`：`cand_q[2]` 承载 `avc_is_long/avc_pocdiff/avc_ref_idx/avc_mvpxy`，而最终 `irpu_mrg_wd` 明确取 `cand_q[3][7:0]` 作为 AVC 的 `avc_mvd_gt4` 信息。
+- `ve_mrg_top` 的 `cand_sel` 与 AMVP 不同，代码中**没有**直接写成 `reg_avc_mode ? 0 : ...`；因此图中保留 MC cost / `cand_sel` / payload pack 本层逻辑，不把它擅自简化为“AVC 下语法强制 cand0”。当前有效 AVC 注入仅直接置起 `mrg_cand_rdy[1][0]`。
+
 ---
 
 ## 2. `ve_mvp_top`：三个一级子模块之间的信号关系
@@ -491,7 +571,7 @@ FIFO.q           -> irpu_amvp_rd[i]
 | `U_VC_MRG_CTRL.cu_blk_en` + `cu_cmd_out` | `[comb] cu_cmd_out_sel` | `U_VC_MRG_CAND_GEN.cu_cmd_out` | 先在 `ve_mrg_top` 按 block size 选择 command，再拼成 17-bit 输入 |
 | `U_VC_MRG_CAND_GEN.cand_blk_done` | `[wire] cand_blk_done` | `U_VC_MRG_CTRL.cand_blk_done` | Candidate 完成反馈 |
 | `U_VC_MRG_CAND_GEN.cand_blk_idle` | `[wire] cand_blk_idle` | `U_VC_MRG_CTRL.cand_blk_idle` | Candidate idle 反馈 |
-| `neib_done_con` | 顶层 input | `U_VC_MRG_CTRL.neib_done_con` | Neighbor 完成只送 CTRL，不送 cand_gen |
+| `neib_done_con` | 顶层 input | `U_VC_MRG_CTRL.neib_done_con` | Neighbor 完成只送 CTRL，不送 candgen |
 
 ### 4.2 Neighbor 数据的消费者必须拆开看
 
@@ -522,7 +602,7 @@ cand_blk_done
 cand_blk_idle
 ```
 
-Candidate FIFO 的 `push/d/pop` 都不是 cand_gen 端口，而由 `ve_mrg_top` 本层生成：
+Candidate FIFO 的 `push/d/pop` 都不是 candgen 端口，而由 `ve_mrg_top` 本层生成：
 
 ```verilog
 cand_push[i*2+0] = ... cand_rdy[0] ...;
@@ -651,10 +731,10 @@ FIFO.q       -> irpu_mrg_rd[i]
 `U_VC_MVP_CAND_PRIOR` 是规则判断层。
 
 ```text
-candgen 内部解析的 availability / POC / long-term / col 信息
+cand_gen 内部解析的 availability / POC / long-term / col 信息
    -> U_VC_MVP_CAND_PRIOR inputs
    -> cand_a[AW-1:0], cand_b[BW-1:0], cand_c[3:0]
-   -> candgen FSM/one-hot candidate selection
+   -> cand_gen FSM/one-hot candidate selection
 ```
 
 关键中转信号：`a0_avail/a1_avail/b0_avail/b1_avail/b2_avail`、`c0_avail/c1_avail`、`n_cur_poc_diff`、`cur_ref_poc/ref_long`、各 A/B POC/long、C0/C1 pocdiff/intra/long。
