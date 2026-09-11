@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="930" viewBox="0 0 1800 930">
+  <rect width="1800" height="930" fill="white"/>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#26364a"/></marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/></marker>
+    <style>
+      .title{font-family:Arial,sans-serif;font-size:28px;font-weight:700;fill:#111827}
+      .box{rx:14;ry:14;stroke:#334155;stroke-width:2;fill:#fff}
+      .top{fill:#eee9ff}.core{fill:#eaf8ea}.io{fill:#eaf1ff}.cfg{fill:#fff4cc}
+      .h{font-family:Arial,sans-serif;font-size:19px;font-weight:700;fill:#111827;text-anchor:middle}
+      .t{font-family:Arial,sans-serif;font-size:15px;fill:#111827;text-anchor:middle}
+      .s{font-family:Arial,sans-serif;font-size:13px;fill:#111827;text-anchor:middle}
+      .lbl{font-family:Arial,sans-serif;font-size:12px;fill:#334155;text-anchor:middle}
+      .blue{fill:#1d4ed8}.green{fill:#15803d}.red{fill:#b91c1c}.gray{fill:#475569}
+      .line{stroke:#26364a;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .blueLine{stroke:#2563eb;stroke-width:2.2;fill:none;marker-end:url(#arrowBlue)}
+      .greenLine{stroke:#16a34a;stroke-width:2.2;fill:none;marker-end:url(#arrowGreen)}
+      .redLine{stroke:#dc2626;stroke-width:2.2;stroke-dasharray:10 7;fill:none;marker-end:url(#arrowRed)}
+      .dashLine{stroke:#64748b;stroke-width:2;stroke-dasharray:8 7;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+
+  <text x="900" y="36" class="title" text-anchor="middle">MVP Top Integration — RTL-Accurate Hierarchy &amp; Signal Relationships</text>
+
+  <!-- Global configuration -->
+  <rect x="55" y="72" width="330" height="88" class="box cfg"/>
+  <text x="220" y="101" class="h">Global Configuration</text>
+  <text x="220" y="128" class="t">reg_avc_mode / reg_i_slice / POC</text>
+  <text x="220" y="151" class="t">ref-count / col flags / mv_gain</text>
+
+  <!-- Top -->
+  <rect x="650" y="72" width="500" height="108" class="box top"/>
+  <text x="900" y="102" class="h">ve_mvp_top</text>
+  <text x="900" y="130" class="t">top-level integration / wiring</text>
+  <text x="900" y="157" class="t">pic_x/y · g_reg_i_slice · is_pic_*</text>
+  <path d="M385 116 H620 Q635 116 650 126" class="line"/>
+  <text x="510" y="104" class="lbl">top ports</text>
+
+  <!-- Core blocks -->
+  <rect x="55" y="320" width="395" height="125" class="box core"/>
+  <text x="252" y="351" class="h">ve_amvp_top</text>
+  <text x="252" y="379" class="t">AMVP control + candidate path</text>
+  <text x="252" y="405" class="t">FME MV → MVP/MVD selection</text>
+
+  <rect x="702" y="320" width="395" height="125" class="box core"/>
+  <text x="900" y="351" class="h">vc_mvp_get_neib</text>
+  <text x="900" y="379" class="t">shared neighbor fetch / cache</text>
+  <text x="900" y="405" class="t">A / B / Col / RefList</text>
+
+  <rect x="1350" y="320" width="395" height="125" class="box core"/>
+  <text x="1547" y="351" class="h">ve_mrg_top</text>
+  <text x="1547" y="379" class="t">Merge control + MC evaluation</text>
+  <text x="1547" y="405" class="t">candidate / cost / CCU result</text>
+
+  <!-- Hierarchy -->
+  <path d="M780 180 L252 312" class="line"/>
+  <text x="515" y="231" class="lbl">config + CU/CTU + is_pic_*</text>
+  <path d="M900 180 V312" class="line"/>
+  <text x="1000" y="231" class="lbl">config + CTU/CU update + pic_x/y</text>
+  <path d="M1020 180 L1547 312" class="line"/>
+  <text x="1285" y="231" class="lbl">config + CU/CTU + g_reg_i_slice / pic_x/y</text>
+
+  <!-- AVC sideband -->
+  <path d="M450 287 H1350" class="redLine"/>
+  <text x="900" y="256" class="lbl red">AVC sideband — one-way AMVP → Merge</text>
+  <text x="900" y="276" class="lbl red">avc_mvp_push / avc_ref_idx / avc_is_long / avc_pocdiff / avc_mvpxy / avc_mvd_gt4</text>
+
+  <!-- AMVP <-> NEIB -->
+  <path d="M450 350 H702" class="blueLine"/>
+  <text x="576" y="326" class="lbl blue">amvp_cu_start / cmd_out / blk_sz</text>
+  <text x="576" y="342" class="lbl blue">cmdq_empty_n[1] / blk_sz_lat / n_blk_sz</text>
+  <path d="M702 414 H450" class="greenLine"/>
+  <text x="576" y="467" class="lbl green">amvp_neib_a,b / col_c / reflist / blk*_neib_*</text>
+  <text x="576" y="483" class="lbl green">neib_done_amvp</text>
+
+  <!-- MRG <-> NEIB -->
+  <path d="M1350 350 H1097" class="dashLine"/>
+  <text x="1224" y="326" class="lbl gray">mrg_cu_start / cmd_out / blk_sz</text>
+  <text x="1224" y="342" class="lbl gray">ports connected; main start/cmd not selected</text>
+  <path d="M1097 414 H1350" class="greenLine"/>
+  <text x="1224" y="467" class="lbl green">mrg_neib_a,b / col_c / reflist / blk*_neib_*</text>
+  <text x="1224" y="483" class="lbl green">neib_done_mrg</text>
+
+  <!-- IO boxes -->
+  <rect x="55" y="675" width="245" height="100" class="box io"/>
+  <text x="178" y="705" class="h">FME Interface</text>
+  <text x="178" y="730" class="t">fme2amvp_cand_rdy / mv</text>
+  <text x="178" y="755" class="t">amvp2fme_cand_ack</text>
+
+  <rect x="335" y="675" width="275" height="100" class="box io"/>
+  <text x="472" y="705" class="h">CCU AMVP Interface</text>
+  <text x="472" y="730" class="t">irpu_amvp_rdy / rd / dlat / mv_info</text>
+  <text x="472" y="755" class="t">irpu_amvp_ack</text>
+
+  <rect x="775" y="675" width="250" height="100" class="box io"/>
+  <text x="900" y="705" class="h">Neighbor / Col / Ref Memory</text>
+  <text x="900" y="730" class="t">req / addr</text>
+  <text x="900" y="755" class="t">gnt / rd_lat / rd</text>
+
+  <rect x="1195" y="675" width="260" height="100" class="box io"/>
+  <text x="1325" y="705" class="h">MC Interface</text>
+  <text x="1325" y="730" class="t">mrg2mc_cand_* / cost_ack</text>
+  <text x="1325" y="755" class="t">mc2mrg_cand_ack / cost_*</text>
+
+  <rect x="1490" y="675" width="255" height="100" class="box io"/>
+  <text x="1617" y="705" class="h">CCU Merge Interface</text>
+  <text x="1617" y="730" class="t">irpu_mrg_rdy / rd</text>
+  <text x="1617" y="755" class="t">irpu_mrg_ack</text>
+
+  <!-- Separate AMVP interfaces -->
+  <path d="M165 445 V667" class="line"/>
+  <text x="112" y="562" class="lbl">cand_ack</text>
+  <path d="M220 675 V453" class="line"/>
+  <text x="274" y="562" class="lbl">cand_rdy / cand_mv</text>
+
+  <path d="M360 445 V667" class="line"/>
+  <text x="372" y="591" class="lbl">rdy / rd / dlat / mv_info</text>
+  <path d="M420 675 V453" class="line"/>
+  <text x="452" y="562" class="lbl">ack</text>
+
+  <!-- Neighbor memory -->
+  <path d="M865 445 V667" class="line"/>
+  <text x="815" y="562" class="lbl">req / addr</text>
+  <path d="M935 675 V453" class="line"/>
+  <text x="992" y="562" class="lbl">gnt / rd_lat / rd</text>
+
+  <!-- Separate Merge interfaces -->
+  <path d="M1435 445 V667" class="line"/>
+  <text x="1360" y="553" class="lbl">cand_rdy / nb / data</text>
+  <text x="1360" y="570" class="lbl">cost_ack / cand_done</text>
+  <path d="M1375 675 V453" class="line"/>
+  <text x="1450" y="600" class="lbl">cand_ack / cost_rdy / cost_data</text>
+
+  <path d="M1580 445 V667" class="line"/>
+  <text x="1604" y="562" class="lbl">rdy / rd</text>
+  <path d="M1640 675 V453" class="line"/>
+  <text x="1672" y="562" class="lbl">ack</text>
+
+  <text x="900" y="855" class="s gray">Current vc_mvp_get_neib main command path: cmdq_cu_start = amvp_cu_start; cu_cmd_out = amvp_cmd_out[0].</text>
+</svg>
