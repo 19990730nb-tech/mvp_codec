@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2500" height="1400" viewBox="0 0 2500 1400">
+  <title>vc_mvp_get_neib Neighbor Subsystem Main Data Flow</title>
+  <desc>RTL-derived data flow for command decoding, four memory-read engines, returned-data capture, intra-CTU reuse, block-size selection, AMVP and MRG neighbor outputs, and completion generation.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#1f2937"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#805ad5"/>
+    </marker>
+    <style>
+      .title{font:700 38px 'DejaVu Sans',sans-serif;fill:#111827}
+      .subtitle{font:15px 'DejaVu Sans',sans-serif;fill:#475569}
+      .h1{font:700 19px 'DejaVu Sans',sans-serif;fill:#111827}
+      .h2{font:700 16px 'DejaVu Sans',sans-serif;fill:#111827}
+      .txt{font:14px 'DejaVu Sans',sans-serif;fill:#1f2937}
+      .sig{font:13px 'DejaVu Sans Mono',monospace;fill:#111827}
+      .small{font:12px 'DejaVu Sans',sans-serif;fill:#374151}
+      .tiny{font:11px 'DejaVu Sans',sans-serif;fill:#475569}
+      .line{fill:none;stroke:#1f2937;stroke-width:2;marker-end:url(#arrow)}
+      .line2{fill:none;stroke:#805ad5;stroke-width:2;marker-end:url(#arrow-purple)}
+      .dash{fill:none;stroke:#c27803;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}
+      .thin{fill:none;stroke:#64748b;stroke-width:1.5;marker-end:url(#arrow)}
+      .blue{fill:#eef7ff;stroke:#2b6cb0;stroke-width:2}
+      .orange{fill:#fff8e6;stroke:#c27803;stroke-width:2}
+      .purple{fill:#f7f0ff;stroke:#805ad5;stroke-width:2}
+      .green{fill:#effcf3;stroke:#2f855a;stroke-width:2}
+      .red{fill:#fff5f5;stroke:#c53030;stroke-width:2}
+      .cyan{fill:#ecfeff;stroke:#27899b;stroke-width:2}
+      .gray{fill:#f7fafc;stroke:#4b5563;stroke-width:2}
+      .round{rx:12;ry:12}
+      .sep{stroke:#94a3b8;stroke-width:1;stroke-dasharray:4 4}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="2500" height="1400" fill="#ffffff"/>
+  <text x="1250" y="48" text-anchor="middle" class="title">vc_mvp_get_neib — Neighbor Subsystem Main Data Flow</text>
+  <text x="1250" y="76" text-anchor="middle" class="subtitle">Shared neighbor acquisition and assembly for AMVP / MRG</text>
+
+  <!-- Inputs -->
+  <rect x="25" y="130" width="315" height="405" class="blue round"/>
+  <text x="182" y="162" text-anchor="middle" class="h1">Commands / Position / Config</text>
+  <line x1="25" y1="178" x2="340" y2="178" stroke="#2b6cb0"/>
+  <text x="44" y="208" class="sig">amvp_cu_start</text>
+  <text x="44" y="232" class="sig">amvp_cmd_out[0]</text>
+  <text x="44" y="256" class="sig">mrg_cmd_out[2:0]</text>
+  <text x="44" y="280" class="sig">cmdq_empty_n[1:0][2:0]</text>
+  <line x1="44" y1="298" x2="320" y2="298" class="sep"/>
+  <text x="44" y="326" class="sig">amvp_blk_sz / mrg_blk_sz</text>
+  <text x="44" y="350" class="sig">ctux / ctuy, pic_x / pic_y</text>
+  <text x="44" y="374" class="sig">reg_avc_mode</text>
+  <text x="44" y="398" class="sig">reg_tmp_mvp_flag</text>
+  <text x="44" y="422" class="sig">reg_i_slice</text>
+  <text x="44" y="446" class="sig">reg_num_ref_l0_act_m1</text>
+  <text x="44" y="470" class="sig">reg_pic_* bounds</text>
+  <text x="44" y="503" class="small">CU command fields supply cux/cuy and</text>
+  <text x="44" y="522" class="small">A/B availability bits.</text>
+
+  <!-- Active start and count logic -->
+  <rect x="385" y="130" width="410" height="405" class="orange round"/>
+  <text x="590" y="162" text-anchor="middle" class="h1">Active Start + Read-count Logic</text>
+  <line x1="385" y1="178" x2="795" y2="178" stroke="#c27803"/>
+  <text x="405" y="207" class="sig">cmdq_cu_start = amvp_cu_start</text>
+  <text x="405" y="231" class="sig">cu_cmd_out = amvp_cmd_out[0]</text>
+  <text x="405" y="255" class="sig">g_cmdq_empty_n = cmdq_empty_n[reg_avc_mode]</text>
+  <line x1="405" y1="273" x2="775" y2="273" class="sep"/>
+  <text x="405" y="301" class="h2">Spatial / temporal read counts</text>
+  <text x="419" y="327" class="sig">b_avail_cnt: 0 / 2 / 3 / 4</text>
+  <text x="419" y="351" class="sig">a_avail_cnt: 0 / 2 / 3</text>
+  <text x="419" y="375" class="sig">c_avail_cnt: 1 / 2 / 3</text>
+  <text x="419" y="399" class="sig">ref_avail_cnt = active_refs</text>
+  <line x1="405" y1="417" x2="775" y2="417" class="sep"/>
+  <text x="405" y="445" class="sig">A/B start = CU start &amp; count!=0</text>
+  <text x="405" y="469" class="sig">Col start = CU start &amp; tmp_mvp</text>
+  <text x="405" y="493" class="sig">Ref start = first non-I CTU</text>
+  <text x="405" y="519" class="small">Counts depend on block lane, availability, cux/cuy.</text>
+  <path d="M340 330 H385" class="line"/>
+
+  <!-- Four read engines -->
+  <text x="1018" y="112" text-anchor="middle" class="h1">4 × vc_mvp_rd_mem</text>
+  <text x="1018" y="131" text-anchor="middle" class="tiny">common FSM: IDLE → GET → CHK_DQ → IDLE; internal request/info FIFO</text>
+
+  <rect x="845" y="155" width="345" height="132" class="purple round"/>
+  <text x="1018" y="183" text-anchor="middle" class="h1">A-neighbor Read Engine</text>
+  <text x="866" y="211" class="sig">U_GET_NEIB_A · DIR=1 · max 3</text>
+  <text x="866" y="237" class="small">start: neib_a_cu_start</text>
+  <text x="866" y="260" class="small">info tag pairs returned 2 × 34-bit entries</text>
+
+  <rect x="845" y="315" width="345" height="132" class="purple round"/>
+  <text x="1018" y="343" text-anchor="middle" class="h1">B-neighbor Read Engine</text>
+  <text x="866" y="371" class="sig">U_GET_NEIB_B · DIR=0 · max 4</text>
+  <text x="866" y="397" class="small">start: neib_b_cu_start</text>
+  <text x="866" y="420" class="small">info tag pairs returned 2 × 34-bit entries</text>
+
+  <rect x="845" y="475" width="345" height="132" class="purple round"/>
+  <text x="1018" y="503" text-anchor="middle" class="h1">Col-C Read Engine</text>
+  <text x="866" y="531" class="sig">U_GET_NEIB_C · DIR=2 · max 3</text>
+  <text x="866" y="557" class="small">start: neib_c_cu_start</text>
+  <text x="866" y="580" class="small">info tag pairs returned 2 × 42-bit entries</text>
+
+  <rect x="845" y="635" width="345" height="132" class="purple round"/>
+  <text x="1018" y="663" text-anchor="middle" class="h1">Reference-list Read Engine</text>
+  <text x="866" y="691" class="sig">U_GET_REFLIST · DIR=3 · NUM_REF</text>
+  <text x="866" y="717" class="small">start: ctu0_start</text>
+  <text x="866" y="740" class="small">one 33-bit {long, POC} entry per ref index</text>
+
+  <path d="M795 250 H820 V221 H845" class="line"/>
+  <path d="M795 330 H820 V381 H845" class="line"/>
+  <path d="M795 410 H810 V541 H845" class="line"/>
+  <path d="M795 490 H800 V701 H845" class="line"/>
+
+  <!-- External memory interfaces -->
+  <rect x="1250" y="155" width="275" height="132" class="gray round"/>
+  <text x="1387" y="185" text-anchor="middle" class="h1">A-neighbor SRAM</text>
+  <text x="1270" y="216" class="sig">irpu2neib_a_{req,addr}</text>
+  <text x="1270" y="242" class="sig">gnt / rd_lat / rd[67:0]</text>
+  <text x="1270" y="268" class="small">spatial left-side candidates</text>
+
+  <rect x="1250" y="315" width="275" height="132" class="gray round"/>
+  <text x="1387" y="345" text-anchor="middle" class="h1">B-neighbor SRAM</text>
+  <text x="1270" y="376" class="sig">irpu2neib_b_{req,addr}</text>
+  <text x="1270" y="402" class="sig">gnt / rd_lat / rd[67:0]</text>
+  <text x="1270" y="428" class="small">spatial upper-side candidates</text>
+
+  <rect x="1250" y="475" width="275" height="132" class="gray round"/>
+  <text x="1387" y="505" text-anchor="middle" class="h1">Collocated MV Memory</text>
+  <text x="1270" y="536" class="sig">irpu2col_{req,addr}</text>
+  <text x="1270" y="562" class="sig">gnt / rd_lat / rd[83:0]</text>
+  <text x="1270" y="588" class="small">temporal motion candidates</text>
+
+  <rect x="1250" y="635" width="275" height="132" class="gray round"/>
+  <text x="1387" y="665" text-anchor="middle" class="h1">Reference-list Memory</text>
+  <text x="1270" y="696" class="sig">irpu2ref_{req,addr}</text>
+  <text x="1270" y="722" class="sig">gnt / rd_lat / rd[32:0]</text>
+  <text x="1270" y="748" class="small">long-term flag + reference POC</text>
+
+  <path d="M1190 207 H1250" class="line"/>
+  <path d="M1190 367 H1250" class="line"/>
+  <path d="M1190 527 H1250" class="line"/>
+  <path d="M1190 687 H1250" class="line"/>
+  <text x="1220" y="195" text-anchor="middle" class="tiny">req/addr</text>
+  <text x="1220" y="355" text-anchor="middle" class="tiny">req/addr</text>
+  <text x="1220" y="515" text-anchor="middle" class="tiny">req/addr</text>
+  <text x="1220" y="675" text-anchor="middle" class="tiny">req/addr</text>
+
+  <!-- Return capture -->
+  <rect x="1585" y="130" width="370" height="660" class="purple round"/>
+  <text x="1770" y="162" text-anchor="middle" class="h1">Return Capture Banks</text>
+  <text x="1770" y="184" text-anchor="middle" class="small">rd_lat + cmdq2ip_info select the destination pair</text>
+  <line x1="1585" y1="198" x2="1955" y2="198" stroke="#805ad5"/>
+
+  <rect x="1610" y="222" width="320" height="100" class="blue round"/>
+  <text x="1770" y="250" text-anchor="middle" class="h2">A capture</text>
+  <text x="1630" y="279" class="sig">mvp_neib_a_reg[5:0][33:0]</text>
+  <text x="1630" y="303" class="small">3 tagged reads × two entries</text>
+
+  <rect x="1610" y="345" width="320" height="100" class="blue round"/>
+  <text x="1770" y="373" text-anchor="middle" class="h2">B capture</text>
+  <text x="1630" y="402" class="sig">mvp_neib_b_reg[7:0][33:0]</text>
+  <text x="1630" y="426" class="small">4 tagged reads × two entries</text>
+
+  <rect x="1610" y="468" width="320" height="100" class="blue round"/>
+  <text x="1770" y="496" text-anchor="middle" class="h2">Col-C capture</text>
+  <text x="1630" y="525" class="sig">mvp_col_c_reg[5:0][41:0]</text>
+  <text x="1630" y="549" class="small">3 tagged reads × two entries</text>
+
+  <rect x="1610" y="591" width="320" height="100" class="cyan round"/>
+  <text x="1770" y="619" text-anchor="middle" class="h2">Reference-list capture</text>
+  <text x="1630" y="648" class="sig">reflist_info[NUM_REF-1:0]</text>
+  <text x="1630" y="672" class="small">shared metadata output</text>
+
+  <rect x="1610" y="714" width="320" height="55" class="red round"/>
+  <text x="1770" y="738" text-anchor="middle" class="h2">Idle status</text>
+  <text x="1770" y="758" text-anchor="middle" class="small">get_neib_{a,b,c}_idle · get_ref_idle</text>
+
+  <path d="M1525 255 H1560 V272 H1610" class="line2"/>
+  <path d="M1525 415 H1560 V395 H1610" class="line2"/>
+  <path d="M1525 575 H1560 V518 H1610" class="line2"/>
+  <path d="M1525 735 H1560 V641 H1610" class="line2"/>
+  <text x="1545" y="244" text-anchor="middle" class="tiny">return</text>
+  <text x="1545" y="404" text-anchor="middle" class="tiny">return</text>
+  <text x="1545" y="564" text-anchor="middle" class="tiny">return</text>
+  <text x="1545" y="724" text-anchor="middle" class="tiny">return</text>
+
+  <!-- Local update / cache -->
+  <rect x="25" y="610" width="385" height="265" class="blue round"/>
+  <text x="217" y="642" text-anchor="middle" class="h1">Current-CU Update</text>
+  <line x1="25" y1="658" x2="410" y2="658" stroke="#2b6cb0"/>
+  <text x="44" y="688" class="sig">cur_cu_upd / cur_cu_upd_sz</text>
+  <text x="44" y="712" class="sig">cur_cu_upd_x / cur_cu_upd_y</text>
+  <text x="44" y="736" class="sig">{refidx, mvy, mvx}</text>
+  <text x="44" y="772" class="small">Writes reconstructed current-CTU edges:</text>
+  <text x="58" y="798" class="sig">a_0_reg[3:0]</text>
+  <text x="58" y="822" class="sig">b_0_reg[3:0]</text>
+  <text x="58" y="846" class="sig">buf_reg[5:0]</text>
+
+  <!-- Selection / assembly -->
+  <rect x="455" y="840" width="745" height="330" class="green round"/>
+  <text x="827" y="873" text-anchor="middle" class="h1">Block-size / Coordinate Selection + Assembly</text>
+  <line x1="455" y1="889" x2="1200" y2="889" stroke="#2f855a"/>
+  <rect x="485" y="918" width="310" height="195" class="gray round"/>
+  <text x="640" y="947" text-anchor="middle" class="h2">Read-bank selection</text>
+  <text x="510" y="980" class="sig">get_rd_neib_a(...)</text>
+  <text x="510" y="1006" class="sig">get_rd_neib_b(...)</text>
+  <text x="510" y="1032" class="sig">get_rd_col_c(...)</text>
+  <text x="510" y="1066" class="small">indexed by blk8 / blk16 / blk32</text>
+  <text x="510" y="1088" class="small">and cux / cuy; AMVP honors AVC mode</text>
+
+  <rect x="830" y="918" width="340" height="195" class="cyan round"/>
+  <text x="1000" y="947" text-anchor="middle" class="h2">Neighbor assembly</text>
+  <text x="855" y="980" class="sig">get_neib_a(...)</text>
+  <text x="855" y="1006" class="sig">get_neib_b(...)</text>
+  <text x="855" y="1032" class="sig">col_c_avail (picture bounds)</text>
+  <text x="855" y="1066" class="small">merges fetched data with a_0_reg,</text>
+  <text x="855" y="1088" class="small">b_0_reg and buf_reg reuse entries</text>
+  <path d="M795 1015 H830" class="line"/>
+
+  <path d="M410 745 H432 V1015 H455" class="line"/>
+  <path d="M1770 790 V815 H640 V918" class="line2"/>
+
+  <!-- Output register and split -->
+  <rect x="1250" y="840" width="370" height="330" class="purple round"/>
+  <text x="1435" y="873" text-anchor="middle" class="h1">Output Registers / Reference Taps</text>
+  <line x1="1250" y1="889" x2="1620" y2="889" stroke="#805ad5"/>
+  <text x="1272" y="921" class="small">Update on memory rd_lat or blk-size latch:</text>
+  <text x="1282" y="953" class="sig">amvp_neib_a[1:0]</text>
+  <text x="1282" y="977" class="sig">amvp_neib_b[2:0]</text>
+  <text x="1282" y="1001" class="sig">mrg_neib_a[1:0]</text>
+  <text x="1282" y="1025" class="sig">mrg_neib_b[2:0]</text>
+  <line x1="1272" y1="1043" x2="1598" y2="1043" class="sep"/>
+  <text x="1282" y="1071" class="sig">amvp_col_c / mrg_col_c</text>
+  <text x="1282" y="1095" class="sig">*_col_c_avail[1:0]</text>
+  <text x="1282" y="1129" class="sig">blk{8,16,32}_neib_{a,b}_r</text>
+  <text x="1282" y="1152" class="small">shared block-edge reference taps</text>
+  <path d="M1200 1005 H1250" class="line"/>
+
+  <rect x="1680" y="850" width="365" height="145" class="blue round"/>
+  <text x="1862" y="881" text-anchor="middle" class="h1">AMVP Consumer</text>
+  <text x="1703" y="915" class="sig">amvp_neib_a / amvp_neib_b</text>
+  <text x="1703" y="941" class="sig">amvp_col_c / amvp_col_c_avail</text>
+  <text x="1703" y="967" class="sig">reflist_info + blk*_neib_*_r</text>
+
+  <rect x="1680" y="1025" width="365" height="145" class="green round"/>
+  <text x="1862" y="1056" text-anchor="middle" class="h1">MRG Consumer</text>
+  <text x="1703" y="1090" class="sig">mrg_neib_a / mrg_neib_b</text>
+  <text x="1703" y="1116" class="sig">mrg_col_c / mrg_col_c_avail</text>
+  <text x="1703" y="1142" class="sig">reflist_info + blk*_neib_*_r</text>
+  <path d="M1620 950 H1680" class="line"/>
+  <path d="M1620 1095 H1680" class="line"/>
+
+  <!-- Completion -->
+  <rect x="2105" y="840" width="365" height="330" class="red round"/>
+  <text x="2287" y="873" text-anchor="middle" class="h1">Completion Combine</text>
+  <line x1="2105" y1="889" x2="2470" y2="889" stroke="#c53030"/>
+  <text x="2128" y="923" class="sig">A idle | blk8 A condition</text>
+  <text x="2128" y="949" class="sig">B idle | blk8 B condition</text>
+  <text x="2128" y="975" class="sig">Col-C idle</text>
+  <text x="2128" y="1001" class="sig">Ref-list idle</text>
+  <text x="2287" y="1037" text-anchor="middle" class="h2">AND</text>
+  <rect x="2150" y="1060" width="275" height="78" class="cyan round"/>
+  <text x="2287" y="1090" text-anchor="middle" class="sig">neib_done_amvp</text>
+  <text x="2287" y="1117" text-anchor="middle" class="sig">neib_done_mrg</text>
+  <path d="M1955 741 H2075 V955 H2105" class="line"/>
+
+  <!-- RTL qualification note -->
+  <rect x="25" y="1225" width="2445" height="112" class="orange round" stroke-dasharray="8 5"/>
+  <text x="50" y="1258" class="h1">RTL qualification</text>
+  <text x="50" y="1287" class="sig">Active CU start/command path uses amvp_cu_start and amvp_cmd_out[0]. The reg_avc_mode ? AMVP : MRG assignments are commented out.</text>
+  <text x="50" y="1314" class="sig">ARB_* constants are declared but no live arbiter is instantiated. The 2-state NEIB_IDLE/WAIT_DONE FSM tracks status; it does not gate requests or outputs.</text>
+
+  <!-- Legend / source -->
+  <rect x="25" y="1352" width="910" height="35" class="gray round" stroke-dasharray="5 4"/>
+  <rect x="42" y="1362" width="20" height="14" class="orange"/><text x="70" y="1374" class="tiny">start/count</text>
+  <rect x="158" y="1362" width="20" height="14" class="purple"/><text x="186" y="1374" class="tiny">read/capture</text>
+  <rect x="296" y="1362" width="20" height="14" class="green"/><text x="324" y="1374" class="tiny">selection</text>
+  <rect x="418" y="1362" width="20" height="14" class="cyan"/><text x="446" y="1374" class="tiny">assembled/shared</text>
+  <rect x="596" y="1362" width="20" height="14" class="red"/><text x="624" y="1374" class="tiny">completion</text>
+  <rect x="724" y="1362" width="20" height="14" class="gray"/><text x="752" y="1374" class="tiny">external memory</text>
+  <text x="2480" y="1377" text-anchor="end" class="small">RTL basis: vc_mvp_get_neib.v · vc_mvp_rd_mem.v · ve_mvp_top.v</text>
+</svg>
