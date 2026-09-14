@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2240" height="1180" viewBox="0 0 2240 1180">
+  <title>MRG Top Subsystem Main Data Flow</title>
+  <desc>RTL-derived data flow through vc_mvp_ctrl, shared neighbor reader, merge candidate generation, six candidate FIFOs, MC cost evaluation, candidate selection, motion calculations, and three MRG-to-CCU FIFOs.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#1f2937"/>
+    </marker>
+    <style>
+      .title{font:700 38px 'DejaVu Sans',sans-serif;fill:#111827}
+      .h1{font:700 19px 'DejaVu Sans',sans-serif;fill:#111827}
+      .h2{font:700 16px 'DejaVu Sans',sans-serif;fill:#111827}
+      .txt{font:14px 'DejaVu Sans',sans-serif;fill:#1f2937}
+      .sig{font:13px 'DejaVu Sans Mono',monospace;fill:#111827}
+      .small{font:12px 'DejaVu Sans',sans-serif;fill:#374151}
+      .line{fill:none;stroke:#1f2937;stroke-width:2;marker-end:url(#arrow)}
+      .dash{fill:none;stroke:#c27803;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}
+      .blue{fill:#eef7ff;stroke:#2b6cb0;stroke-width:2}
+      .orange{fill:#fff8e6;stroke:#c27803;stroke-width:2}
+      .purple{fill:#f7f0ff;stroke:#805ad5;stroke-width:2}
+      .green{fill:#effcf3;stroke:#2f855a;stroke-width:2}
+      .red{fill:#fff5f5;stroke:#c53030;stroke-width:2}
+      .cyan{fill:#ecfeff;stroke:#27899b;stroke-width:2}
+      .gray{fill:#f7fafc;stroke:#4b5563;stroke-width:2}
+      .round{rx:12;ry:12}
+      .sep{stroke:#94a3b8;stroke-width:1;stroke-dasharray:4 4}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="2240" height="1180" fill="#ffffff"/>
+  <text x="1120" y="50" text-anchor="middle" class="title">MRG Top Subsystem Main Data Flow</text>
+
+  <!-- Input and control -->
+  <rect x="22" y="255" width="215" height="310" class="blue round"/>
+  <text x="129" y="284" text-anchor="middle" class="h1">CU / Configuration</text>
+  <line x1="22" y1="298" x2="237" y2="298" stroke="#2b6cb0"/>
+  <text x="36" y="326" class="sig">cur_cu_start[2:0]</text>
+  <text x="36" y="349" class="sig">cur_cu_x / cur_cu_y</text>
+  <text x="36" y="372" class="sig">cur_cu_a/b_avail</text>
+  <text x="36" y="395" class="sig">cur_cu_is_skip / zmv</text>
+  <text x="36" y="418" class="sig">cur_cu_terminate</text>
+  <line x1="36" y1="435" x2="221" y2="435" class="sep"/>
+  <text x="36" y="460" class="sig">reg_slice_go</text>
+  <text x="36" y="483" class="sig">reg_cur_poc</text>
+  <text x="36" y="506" class="sig">reg_tmp_mvp_flag</text>
+  <text x="36" y="529" class="sig">reg_num_ref_l0_act_m1</text>
+  <text x="36" y="552" class="sig">reg_avc_mode</text>
+
+  <rect x="276" y="255" width="215" height="310" class="orange round"/>
+  <text x="383" y="284" text-anchor="middle" class="h1">vc_mvp_ctrl</text>
+  <text x="383" y="306" text-anchor="middle" class="small">AMVP_OR_MRG = 0</text>
+  <line x1="276" y1="320" x2="491" y2="320" stroke="#c27803"/>
+  <text x="294" y="353" class="txt">• CU command scheduling</text>
+  <text x="294" y="379" class="txt">• blk8 / blk16 / blk32</text>
+  <text x="294" y="405" class="txt">• neighbor-read start</text>
+  <text x="294" y="431" class="txt">• candidate start</text>
+  <text x="294" y="466" class="sig">cu_cmd_out[2:0]</text>
+  <text x="294" y="489" class="sig">cu_blk_en[2:0]</text>
+  <text x="294" y="512" class="sig">neib_cu_start</text>
+  <text x="294" y="535" class="sig">cand_cu_start</text>
+
+  <path d="M237 405 H276" class="line"/>
+
+  <!-- Shared neighbor reader and memories -->
+  <rect x="525" y="135" width="103" height="62" class="gray round"/>
+  <rect x="639" y="135" width="103" height="62" class="gray round"/>
+  <rect x="753" y="135" width="103" height="62" class="gray round"/>
+  <text x="576" y="160" text-anchor="middle" class="h2">A/B SRAM</text>
+  <text x="576" y="180" text-anchor="middle" class="small">spatial MV</text>
+  <text x="690" y="160" text-anchor="middle" class="h2">Col C</text>
+  <text x="690" y="180" text-anchor="middle" class="small">temporal MV</text>
+  <text x="804" y="160" text-anchor="middle" class="h2">Ref List</text>
+  <text x="804" y="180" text-anchor="middle" class="small">POC data</text>
+
+  <rect x="525" y="230" width="331" height="305" class="purple round"/>
+  <text x="690" y="261" text-anchor="middle" class="h1">vc_mvp_get_neib</text>
+  <text x="690" y="284" text-anchor="middle" class="small">shared AMVP / MRG neighbor reader</text>
+  <line x1="525" y1="298" x2="856" y2="298" stroke="#805ad5"/>
+  <text x="544" y="330" class="txt">• trigger: neib_cu_start + mrg_cmd_out</text>
+  <text x="544" y="357" class="txt">• reads A/B and Col C motion data</text>
+  <text x="544" y="384" class="txt">• supplies reference-list information</text>
+  <line x1="544" y1="401" x2="837" y2="401" class="sep"/>
+  <text x="544" y="427" class="sig">mrg_neib_a / mrg_neib_b</text>
+  <text x="544" y="451" class="sig">mrg_col_c / mrg_col_c_avail</text>
+  <text x="544" y="475" class="sig">reflist_info</text>
+  <text x="544" y="499" class="sig">blk{8,16,32}_neib_{a,b}_r</text>
+  <text x="544" y="523" class="sig">neib_done_mrg</text>
+
+  <path d="M576 197 V230" class="line"/>
+  <path d="M690 197 V230" class="line"/>
+  <path d="M804 197 V230" class="line"/>
+  <path d="M491 365 H525" class="line"/>
+
+  <!-- Candidate generation -->
+  <rect x="895" y="255" width="247" height="280" class="green round"/>
+  <text x="1018" y="286" text-anchor="middle" class="h1">vc_mvp_cand_gen</text>
+  <text x="1018" y="309" text-anchor="middle" class="small">MRG candidate generation</text>
+  <line x1="895" y1="323" x2="1142" y2="323" stroke="#2f855a"/>
+  <text x="913" y="351" class="txt">Inputs:</text>
+  <text x="925" y="376" class="sig">cand_cu_start</text>
+  <text x="925" y="399" class="sig">cu_cmd_out_sel</text>
+  <text x="925" y="422" class="sig">neighbor / Col C / ref list</text>
+  <line x1="913" y1="440" x2="1124" y2="440" class="sep"/>
+  <text x="913" y="466" class="txt">Outputs up to two candidates</text>
+  <text x="913" y="490" class="sig">cand_mv[0], cand_rdy[0]</text>
+  <text x="913" y="513" class="sig">cand_mv[1], cand_rdy[1]</text>
+
+  <path d="M856 382 H895" class="line"/>
+  <path d="M491 490 V575 H870 V475 H895" class="line"/>
+
+  <!-- Candidate FIFO bank -->
+  <rect x="1180" y="170" width="360" height="385" class="blue round"/>
+  <text x="1360" y="200" text-anchor="middle" class="h1">MRG Candidate FIFO Bank</text>
+  <text x="1360" y="223" text-anchor="middle" class="small">6 × depth-1 FIFO, 46 bits each</text>
+  <text x="1248" y="250" text-anchor="middle" class="h2">block size</text>
+  <text x="1341" y="250" text-anchor="middle" class="h2">cand0</text>
+  <text x="1451" y="250" text-anchor="middle" class="h2">cand1</text>
+
+  <rect x="1210" y="266" width="86" height="70" class="gray round"/>
+  <rect x="1308" y="266" width="86" height="70" class="blue round"/>
+  <rect x="1406" y="266" width="86" height="70" class="blue round"/>
+  <text x="1253" y="307" text-anchor="middle" class="h2">blk8</text>
+  <text x="1351" y="296" text-anchor="middle" class="small">FIFO[0]</text>
+  <text x="1351" y="317" text-anchor="middle" class="small">candidate 0</text>
+  <text x="1449" y="296" text-anchor="middle" class="small">FIFO[1]</text>
+  <text x="1449" y="317" text-anchor="middle" class="small">candidate 1</text>
+
+  <rect x="1210" y="347" width="86" height="70" class="gray round"/>
+  <rect x="1308" y="347" width="86" height="70" class="blue round"/>
+  <rect x="1406" y="347" width="86" height="70" class="blue round"/>
+  <text x="1253" y="388" text-anchor="middle" class="h2">blk16</text>
+  <text x="1351" y="377" text-anchor="middle" class="small">FIFO[2]</text>
+  <text x="1351" y="398" text-anchor="middle" class="small">candidate 0</text>
+  <text x="1449" y="377" text-anchor="middle" class="small">FIFO[3]</text>
+  <text x="1449" y="398" text-anchor="middle" class="small">candidate 1</text>
+
+  <rect x="1210" y="428" width="86" height="70" class="gray round"/>
+  <rect x="1308" y="428" width="86" height="70" class="blue round"/>
+  <rect x="1406" y="428" width="86" height="70" class="blue round"/>
+  <text x="1253" y="469" text-anchor="middle" class="h2">blk32</text>
+  <text x="1351" y="458" text-anchor="middle" class="small">FIFO[4]</text>
+  <text x="1351" y="479" text-anchor="middle" class="small">candidate 0</text>
+  <text x="1449" y="458" text-anchor="middle" class="small">FIFO[5]</text>
+  <text x="1449" y="479" text-anchor="middle" class="small">candidate 1</text>
+  <text x="1360" y="528" text-anchor="middle" class="small">{blk_sz, long, pocdiff, ref_idx, MV}</text>
+
+  <path d="M1142 395 H1180" class="line"/>
+
+  <!-- Dispatch and MC -->
+  <rect x="1180" y="605" width="360" height="150" class="orange round"/>
+  <text x="1360" y="634" text-anchor="middle" class="h1">Candidate Dispatch / Flow FSM</text>
+  <text x="1200" y="666" class="txt">• suppress equal / near-equal cand1</text>
+  <text x="1200" y="691" class="txt">• send cand0, then cand1 when enabled</text>
+  <text x="1200" y="723" class="sig">mrg2mc_cand_{rdy,data,nb,done}</text>
+  <text x="1200" y="746" class="sig">mc2mrg_cand_ack</text>
+  <path d="M1360 555 V605" class="line"/>
+
+  <rect x="1620" y="450" width="310" height="230" class="gray round"/>
+  <text x="1775" y="482" text-anchor="middle" class="h1">MC (external)</text>
+  <line x1="1620" y1="496" x2="1930" y2="496" stroke="#4b5563"/>
+  <text x="1640" y="527" class="txt">• predicts candidate 0 / candidate 1</text>
+  <text x="1640" y="554" class="txt">• three independent block-size lanes</text>
+  <text x="1640" y="594" class="sig">mc2mrg_cost_rdy[2:0]</text>
+  <text x="1640" y="618" class="sig">mc2mrg_cost_data = {SSE, SATD}</text>
+  <text x="1640" y="642" class="sig">mrg2mc_cost_ack[2:0]</text>
+
+  <path d="M1540 665 H1620" class="line"/>
+
+  <!-- Cost selection -->
+  <rect x="1180" y="810" width="360" height="170" class="red round"/>
+  <text x="1360" y="840" text-anchor="middle" class="h1">Cost Capture / Candidate Select</text>
+  <text x="1200" y="872" class="txt">• latch cost0 when first MC cost arrives</text>
+  <text x="1200" y="898" class="txt">• cost1 comes from second MC result</text>
+  <text x="1200" y="924" class="txt">• cand_sel = (SATD1 &lt; SATD0) &amp; cand_diff</text>
+  <text x="1200" y="957" class="sig">selected candidate + SATD + SSE</text>
+  <path d="M1775 680 V775 H1515 V810" class="line"/>
+  <text x="1650" y="765" text-anchor="middle" class="small">cost_rdy / cost_data</text>
+  <path d="M1360 755 V810" class="line"/>
+
+  <!-- Parallel calculations -->
+  <rect x="1580" y="810" width="235" height="170" class="cyan round"/>
+  <text x="1697" y="840" text-anchor="middle" class="h1">Parallel Metadata</text>
+  <text x="1600" y="874" class="h2">MVBS</text>
+  <text x="1600" y="897" class="small">candidate MV vs A/B MV</text>
+  <text x="1600" y="930" class="h2">Motion level</text>
+  <text x="1600" y="953" class="small">|cand0-cand1| × mv_gain</text>
+  <path d="M1540 895 H1580" class="line"/>
+
+  <!-- Result packing and output FIFO -->
+  <rect x="1850" y="780" width="250" height="230" class="purple round"/>
+  <text x="1975" y="810" text-anchor="middle" class="h1">MRG Result Pack</text>
+  <text x="1975" y="833" text-anchor="middle" class="small">3 × depth-1 output FIFO</text>
+  <line x1="1850" y1="848" x2="2100" y2="848" stroke="#805ad5"/>
+  <text x="1868" y="876" class="small">MVBS + motion level</text>
+  <text x="1868" y="898" class="small">SSE / SATD</text>
+  <text x="1868" y="920" class="small">pocdiff / long</text>
+  <text x="1868" y="942" class="small">mrg_idx / ref_idx / MV</text>
+  <text x="1868" y="976" class="sig">irpu_mrg_rdy / rd / ack</text>
+  <path d="M1815 895 H1850" class="line"/>
+  <rect x="2140" y="860" width="78" height="70" class="gray round"/>
+  <text x="2179" y="900" text-anchor="middle" class="h2">CCU</text>
+  <path d="M2100 895 H2140" class="line"/>
+
+  <!-- Termination side path -->
+  <rect x="820" y="805" width="300" height="145" class="gray round"/>
+  <text x="970" y="834" text-anchor="middle" class="h1">Termination FSM</text>
+  <text x="840" y="866" class="txt">wait until all queues are empty</text>
+  <text x="840" y="892" class="txt">flush pending block-size counts</text>
+  <text x="840" y="924" class="sig">TERM_IDLE → WAIT_EMPTY → FLUSH</text>
+  <path d="M1120 900 H1145 V995 H1850" class="line"/>
+
+  <!-- AVC injection -->
+  <rect x="420" y="1018" width="1240" height="92" class="orange round" stroke-dasharray="8 5"/>
+  <text x="442" y="1048" class="h1">AVC-mode injection (reg_avc_mode)</text>
+  <text x="442" y="1078" class="sig">avc_mvp_push | avc_ref_idx | avc_is_long | avc_pocdiff | avc_mvpxy | avc_mvd_gt4</text>
+  <text x="442" y="1099" class="small">Only the blk16 candidate pair is pushed; MC cost/selection and result packing remain on the MRG path.</text>
+  <path d="M1155 1018 V382 H1308" class="dash"/>
+  <text x="1167" y="1003" class="small">to FIFO[2]/FIFO[3]</text>
+
+  <!-- Legend and source -->
+  <rect x="22" y="1030" width="380" height="80" class="gray round" stroke-dasharray="5 4"/>
+  <rect x="42" y="1050" width="22" height="16" class="orange"/><text x="73" y="1063" class="small">control / scheduling</text>
+  <rect x="240" y="1050" width="22" height="16" class="purple"/><text x="271" y="1063" class="small">neighbor / output</text>
+  <rect x="42" y="1080" width="22" height="16" class="green"/><text x="73" y="1093" class="small">candidate generation</text>
+  <rect x="240" y="1080" width="22" height="16" class="cyan"/><text x="271" y="1093" class="small">parallel metadata</text>
+  <text x="1120" y="1150" text-anchor="middle" class="small">RTL basis: ve_mvp_top / ve_mrg_top / vc_mvp_ctrl / vc_mvp_get_neib / vc_mvp_cand_gen</text>
+</svg>
