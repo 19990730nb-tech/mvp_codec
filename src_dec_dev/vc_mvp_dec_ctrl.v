@@ -1,13 +1,14 @@
-// AVC decoder motion-transaction admission/scheduling controller.
-//
-// This is intentionally a standalone T00 block.  It owns one accepted
-// transaction at a time and leaves neighbor generation, candidate arithmetic,
-// reconstruction, and result packing to later integration work.
+// AVC DEC: one-entry motion-transaction controller for the AVC decoder.
+// It accepts parsed CCU syntax, holds the transaction context, sequences
+// Neighbor/MVP/reconstruction handoffs, and retires on MC commit.
+// It does not generate neighbors, calculate MVP/final MV values, hold the
+// result for MC, or generate the Neighbor current-CU update.
 
 module vc_mvp_dec_ctrl (
     input                   clk_vc,
     input                   vc_rst_z,
     input                   codec_mode,
+    input                   reg_slice_go,
 
     input                   ccu2irpu_valid,
     output                  irpu2ccu_rdy,
@@ -23,12 +24,7 @@ module vc_mvp_dec_ctrl (
     input                   neib_done_amvp,
     input                   cand_capture_done,
     input                   recon_done,
-    input                   result_accept,
-
-    input                   cur_cu_upd,
-    input      [1:0]        cur_cu_upd_sz,
-    input      [2:0]        cur_cu_upd_x,
-    input      [2:0]        cur_cu_upd_y,
+    input                   mc_commit,
 
     output                  dec_neib_start,
     output                  dec_cand_start,
@@ -47,13 +43,16 @@ module vc_mvp_dec_ctrl (
     output     [5:0]        dbg_dec_fsm_cs
 );
 
+    // AVC DEC: one-hot pipeline ownership; DEC_SEND holds the final-MV
+    // transaction until the downstream MC/result-hold path commits it.
     localparam [5:0] DEC_IDLE     = 6'b000001;
     localparam [5:0] DEC_NEIB     = 6'b000010;
     localparam [5:0] DEC_MVP      = 6'b000100;
     localparam [5:0] DEC_RECON    = 6'b001000;
     localparam [5:0] DEC_SEND     = 6'b010000;
-    localparam [5:0] DEC_WAIT_UPD = 6'b100000;
 
+    // Registered transaction context: downstream stages use these fields,
+    // never the raw CCU payload after the acceptance cycle.
     reg [5:0]       dec_fsm_cs;
     reg [5:0]       dec_fsm_ns;
 
@@ -66,15 +65,16 @@ module vc_mvp_dec_ctrl (
     reg [2:0]        dec_cuy_q;
     reg [1:0]        dec_expected_sub_idx_q;
 
+    // One-cycle handoff pulses: Neighbor -> candidate/MVP -> reconstruction.
     reg              dec_neib_start_q;
     reg              dec_cand_start_q;
     reg              dec_recon_start_q;
 
     wire             dec_accept;
     wire [1:0]       expected_sub_idx_next;
-    wire [1:0]       expected_commit_sz;
-    wire             dec_commit;
 
+    // Admission is resource-only.  Ordering violations are simulation errors;
+    // they must not suppress ready and create a protocol deadlock.
     assign irpu2ccu_rdy       = codec_mode && (dec_fsm_cs == DEC_IDLE);
     assign dec_accept         = ccu2irpu_valid && irpu2ccu_rdy;
 
@@ -94,51 +94,44 @@ module vc_mvp_dec_ctrl (
     assign dec_busy              = (dec_fsm_cs != DEC_IDLE);
     assign dbg_dec_fsm_cs       = dec_fsm_cs;
 
-    // The update size is determined from the latched syntax, never raw CCU
-    // inputs.  P8x8 is blk8; P16x16 and skip use blk16 commits.
-    assign expected_commit_sz = dec_part_mode_q ? 2'd1 : 2'd2;
-
-    assign dec_commit = cur_cu_upd &&
-                        (cur_cu_upd_sz == expected_commit_sz) &&
-                        (cur_cu_upd_x  == dec_cux_q) &&
-                        (cur_cu_upd_y  == dec_cuy_q);
-
-    // The ordering tracker advances only after the matching update commit.
-    // It is deliberately not part of ready generation.
+    // P8 order is committed from the registered sub-index.  This tracker is
+    // deliberately not part of ready generation (see admission above).
     assign expected_sub_idx_next =
         (dec_sub_idx_q == 2'd3) ? 2'd0 : (dec_sub_idx_q + 2'd1);
 
+    // FSM handoffs: each completion advances one stage; final-MV delivery is
+    // complete only when MC accepts the externally held result.
     always @(*) begin
         dec_fsm_ns = dec_fsm_cs;
 
         case (dec_fsm_cs)
             DEC_IDLE: begin
+                // CCU syntax is latched before the Neighbor request pulse.
                 if (dec_accept)
                     dec_fsm_ns = DEC_NEIB;
             end
 
             DEC_NEIB: begin
+                // Neighbor has returned the spatial A/B/C view for MVP.
                 if (neib_done_amvp)
                     dec_fsm_ns = DEC_MVP;
             end
 
             DEC_MVP: begin
+                // Candidate/MVP stage has captured its predictor inputs.
                 if (cand_capture_done)
                     dec_fsm_ns = DEC_RECON;
             end
 
             DEC_RECON: begin
+                // Reconstruction has produced the final MV for the MC hold.
                 if (recon_done)
                     dec_fsm_ns = DEC_SEND;
             end
 
             DEC_SEND: begin
-                if (result_accept)
-                    dec_fsm_ns = DEC_WAIT_UPD;
-            end
-
-            DEC_WAIT_UPD: begin
-                if (dec_commit)
+                // mc_commit is the architectural transaction retirement point.
+                if (mc_commit)
                     dec_fsm_ns = DEC_IDLE;
             end
 
@@ -161,15 +154,31 @@ module vc_mvp_dec_ctrl (
             dec_cand_start_q       <= 1'b0;
             dec_recon_start_q      <= 1'b0;
         end
+        // Synchronous slice/mode flush drops pending work and all context.
+        else if (reg_slice_go || !codec_mode) begin
+            dec_fsm_cs             <= DEC_IDLE;
+            dec_mvd_q              <= 32'd0;
+            dec_ref_idx_q          <= 4'd0;
+            dec_is_skip_q          <= 1'b0;
+            dec_part_mode_q        <= 1'b0;
+            dec_sub_idx_q          <= 2'd0;
+            dec_cux_q              <= 3'd0;
+            dec_cuy_q              <= 3'd0;
+            dec_expected_sub_idx_q <= 2'd0;
+            dec_neib_start_q       <= 1'b0;
+            dec_cand_start_q       <= 1'b0;
+            dec_recon_start_q      <= 1'b0;
+        end
         else begin
             dec_fsm_cs        <= dec_fsm_ns;
 
-            // Registered pulse outputs are cleared by default.  Each is set
-            // only at the event that enters its associated processing state.
+            // Clear handoff pulses by default; each is asserted only for the
+            // completion event that launches the next downstream stage.
             dec_neib_start_q  <= 1'b0;
             dec_cand_start_q  <= 1'b0;
             dec_recon_start_q <= 1'b0;
 
+            // Capture the complete CCU transaction at the one accepted beat.
             if (dec_accept) begin
                 dec_mvd_q       <= ccu2irpu_mvd;
                 dec_ref_idx_q   <= ccu2irpu_ref_idx;
@@ -179,18 +188,22 @@ module vc_mvp_dec_ctrl (
                 dec_cux_q       <= dec_txn_cux;
                 dec_cuy_q       <= dec_txn_cuy;
 
-                // This pulse is visible in the cycle after the handshake,
-                // when all transaction fields are registered.
+                // Neighbor sees the registered context in this following cycle.
                 dec_neib_start_q <= 1'b1;
             end
             else begin
+                // These pulses mark the Neighbor -> MVP and MVP -> final-MV
+                // reconstruction handoff points; arithmetic is external.
                 if ((dec_fsm_cs == DEC_NEIB) && neib_done_amvp)
                     dec_cand_start_q <= 1'b1;
 
                 if ((dec_fsm_cs == DEC_MVP) && cand_capture_done)
                     dec_recon_start_q <= 1'b1;
 
-                if ((dec_fsm_cs == DEC_WAIT_UPD) && dec_commit) begin
+                // AVC DEC: advance P8 only after MC commit so the prior final
+                // MV is visible to the next sub-block's rolling-neighbor lookup.
+                // P16 and P_SKIP are complete macroblock transactions.
+                if ((dec_fsm_cs == DEC_SEND) && mc_commit) begin
                     if (dec_part_mode_q)
                         dec_expected_sub_idx_q <= expected_sub_idx_next;
                     else
@@ -236,8 +249,8 @@ module vc_mvp_dec_ctrl (
                 (ccu2irpu_part_mode || (ccu2irpu_sub_idx != 2'd0)))
                 $error("vc_mvp_dec_ctrl: P_SKIP must be P16/sub_idx 0");
 
-            if (dec_commit && (dec_fsm_cs != DEC_WAIT_UPD))
-                $error("vc_mvp_dec_ctrl: dec_commit acted on outside DEC_WAIT_UPD");
+            if (mc_commit && (dec_fsm_cs != DEC_SEND))
+                $error("vc_mvp_dec_ctrl: mc_commit acted on outside DEC_SEND");
 
             dec_neib_start_d  <= dec_neib_start;
             dec_cand_start_d  <= dec_cand_start;

@@ -1,11 +1,13 @@
-// Decoder-side compatibility name for the T00 transaction controller.
-// The encoder reference also has a vc_mvp_ctrl module; compile this decoder
-// entry point as a standalone unit, or instantiate vc_mvp_dec_ctrl directly.
+// AVC DEC: compatibility wrapper for the decoder transaction controller.
+// It forwards CCU syntax, stage completions, MC commit, and slice/mode flush
+// while exposing the registered transaction context and stage handoff pulses.
+// It performs no Neighbor, MVP, reconstruction, or MC-result processing.
 
 module vc_mvp_ctrl (
     input                   clk_vc,
     input                   vc_rst_z,
     input                   codec_mode,
+    input                   reg_slice_go,
     input                   ccu2irpu_valid,
     output                  irpu2ccu_rdy,
     input      [1:0][15:0]  ccu2irpu_mvd,
@@ -18,11 +20,7 @@ module vc_mvp_ctrl (
     input                   neib_done_amvp,
     input                   cand_capture_done,
     input                   recon_done,
-    input                   result_accept,
-    input                   cur_cu_upd,
-    input      [1:0]        cur_cu_upd_sz,
-    input      [2:0]        cur_cu_upd_x,
-    input      [2:0]        cur_cu_upd_y,
+    input                   mc_commit,
     output                  dec_neib_start,
     output                  dec_cand_start,
     output                  dec_recon_start,
@@ -42,6 +40,7 @@ module vc_mvp_ctrl (
         .clk_vc               (clk_vc),
         .vc_rst_z             (vc_rst_z),
         .codec_mode           (codec_mode),
+        .reg_slice_go         (reg_slice_go),
         .ccu2irpu_valid       (ccu2irpu_valid),
         .irpu2ccu_rdy         (irpu2ccu_rdy),
         .ccu2irpu_mvd         (ccu2irpu_mvd),
@@ -54,11 +53,7 @@ module vc_mvp_ctrl (
         .neib_done_amvp       (neib_done_amvp),
         .cand_capture_done    (cand_capture_done),
         .recon_done           (recon_done),
-        .result_accept        (result_accept),
-        .cur_cu_upd            (cur_cu_upd),
-        .cur_cu_upd_sz         (cur_cu_upd_sz),
-        .cur_cu_upd_x          (cur_cu_upd_x),
-        .cur_cu_upd_y          (cur_cu_upd_y),
+        .mc_commit            (mc_commit),
         .dec_neib_start       (dec_neib_start),
         .dec_cand_start       (dec_cand_start),
         .dec_recon_start      (dec_recon_start),
