@@ -20,6 +20,8 @@ module vc_mvp_dec_ctrl (
 
     input      [2:0]        dec_txn_cux,
     input      [2:0]        dec_txn_cuy,
+    input      [1:0]        dec_txn_a_avail,
+    input      [2:0]        dec_txn_b_avail,
 
     input                   neib_done_amvp,
     input                   cand_capture_done,
@@ -37,6 +39,8 @@ module vc_mvp_dec_ctrl (
     output     [1:0]        dec_sub_idx,
     output     [2:0]        dec_cux,
     output     [2:0]        dec_cuy,
+    output     [1:0]        dec_a_avail,
+    output     [2:0]        dec_b_avail,
 
     output     [1:0]        dec_expected_sub_idx,
     output                  dec_busy,
@@ -63,6 +67,8 @@ module vc_mvp_dec_ctrl (
     reg [1:0]        dec_sub_idx_q;
     reg [2:0]        dec_cux_q;
     reg [2:0]        dec_cuy_q;
+    reg [1:0]        dec_a_avail_q;
+    reg [2:0]        dec_b_avail_q;
     reg [1:0]        dec_expected_sub_idx_q;
 
     // One-cycle handoff pulses: Neighbor -> candidate/MVP -> reconstruction.
@@ -89,6 +95,8 @@ module vc_mvp_dec_ctrl (
     assign dec_sub_idx        = dec_sub_idx_q;
     assign dec_cux            = dec_cux_q;
     assign dec_cuy            = dec_cuy_q;
+    assign dec_a_avail        = dec_a_avail_q;
+    assign dec_b_avail        = dec_b_avail_q;
 
     assign dec_expected_sub_idx = dec_expected_sub_idx_q;
     assign dec_busy              = (dec_fsm_cs != DEC_IDLE);
@@ -149,6 +157,8 @@ module vc_mvp_dec_ctrl (
             dec_sub_idx_q          <= 2'd0;
             dec_cux_q              <= 3'd0;
             dec_cuy_q              <= 3'd0;
+            dec_a_avail_q          <= 2'd0;
+            dec_b_avail_q          <= 3'd0;
             dec_expected_sub_idx_q <= 2'd0;
             dec_neib_start_q       <= 1'b0;
             dec_cand_start_q       <= 1'b0;
@@ -164,6 +174,8 @@ module vc_mvp_dec_ctrl (
             dec_sub_idx_q          <= 2'd0;
             dec_cux_q              <= 3'd0;
             dec_cuy_q              <= 3'd0;
+            dec_a_avail_q          <= 2'd0;
+            dec_b_avail_q          <= 3'd0;
             dec_expected_sub_idx_q <= 2'd0;
             dec_neib_start_q       <= 1'b0;
             dec_cand_start_q       <= 1'b0;
@@ -187,6 +199,10 @@ module vc_mvp_dec_ctrl (
                 dec_sub_idx_q   <= ccu2irpu_sub_idx;
                 dec_cux_q       <= dec_txn_cux;
                 dec_cuy_q       <= dec_txn_cuy;
+                // Availability is transaction context; hold it through all
+                // downstream stages instead of rereading the raw CCU inputs.
+                dec_a_avail_q   <= dec_txn_a_avail;
+                dec_b_avail_q   <= dec_txn_b_avail;
 
                 // Neighbor sees the registered context in this following cycle.
                 dec_neib_start_q <= 1'b1;
@@ -236,6 +252,11 @@ module vc_mvp_dec_ctrl (
 
             if (dec_accept && (dec_fsm_cs != DEC_IDLE))
                 $error("vc_mvp_dec_ctrl: accepted transaction while busy");
+
+            // Phase-1 has one legal L0 reference; width remains 4 bits for
+            // structural compatibility and future extension.
+            if (dec_accept && ccu2irpu_ref_idx != 4'd0)
+                $error("vc_mvp_dec_ctrl: phase-1 Decoder requires ref_idx 0");
 
             if (dec_accept && ccu2irpu_part_mode &&
                 (ccu2irpu_sub_idx != dec_expected_sub_idx_q))

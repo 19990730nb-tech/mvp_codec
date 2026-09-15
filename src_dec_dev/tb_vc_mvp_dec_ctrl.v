@@ -5,8 +5,8 @@
 //       src_dec_dev/vc_mvp_dec_ctrl.v src_dec_dev/tb_vc_mvp_dec_ctrl.v
 //   vvp t00.vvp
 //
-// Out-of-order P8 and illegal P_SKIP inputs intentionally emit the
-// controller's simulation-only protocol errors.  They must not deadlock
+// Out-of-order P8, illegal P_SKIP, and the deliberate non-zero ref_idx case
+// intentionally emit simulation-only protocol errors.  They must not deadlock
 // ready/valid admission.
 
 `timescale 1ns/1ps
@@ -26,6 +26,8 @@ module tb_vc_mvp_dec_ctrl;
     reg      [1:0]        ccu2irpu_sub_idx;
     reg      [2:0]        dec_txn_cux;
     reg      [2:0]        dec_txn_cuy;
+    reg      [1:0]        dec_txn_a_avail;
+    reg      [2:0]        dec_txn_b_avail;
     reg                   neib_done_amvp;
     reg                   cand_capture_done;
     reg                   recon_done;
@@ -40,6 +42,8 @@ module tb_vc_mvp_dec_ctrl;
     wire     [1:0]        dec_sub_idx;
     wire     [2:0]        dec_cux;
     wire     [2:0]        dec_cuy;
+    wire     [1:0]        dec_a_avail;
+    wire     [2:0]        dec_b_avail;
     wire     [1:0]        dec_expected_sub_idx;
     wire                  dec_busy;
     wire     [5:0]        dbg_dec_fsm_cs;
@@ -54,6 +58,8 @@ module tb_vc_mvp_dec_ctrl;
     reg [1:0]  held_sub_idx;
     reg [2:0]  held_cux;
     reg [2:0]  held_cuy;
+    reg [1:0]  held_a_avail;
+    reg [2:0]  held_b_avail;
 
     vc_mvp_dec_ctrl dut (
         .clk_vc               (clk_vc),
@@ -69,6 +75,8 @@ module tb_vc_mvp_dec_ctrl;
         .ccu2irpu_sub_idx     (ccu2irpu_sub_idx),
         .dec_txn_cux          (dec_txn_cux),
         .dec_txn_cuy          (dec_txn_cuy),
+        .dec_txn_a_avail      (dec_txn_a_avail),
+        .dec_txn_b_avail      (dec_txn_b_avail),
         .neib_done_amvp       (neib_done_amvp),
         .cand_capture_done    (cand_capture_done),
         .recon_done           (recon_done),
@@ -83,6 +91,8 @@ module tb_vc_mvp_dec_ctrl;
         .dec_sub_idx          (dec_sub_idx),
         .dec_cux              (dec_cux),
         .dec_cuy              (dec_cuy),
+        .dec_a_avail          (dec_a_avail),
+        .dec_b_avail          (dec_b_avail),
         .dec_expected_sub_idx (dec_expected_sub_idx),
         .dec_busy             (dec_busy),
         .dbg_dec_fsm_cs       (dbg_dec_fsm_cs)
@@ -138,6 +148,10 @@ module tb_vc_mvp_dec_ctrl;
                   "partition syntax must be latched on acceptance");
             check(dec_cux == txn_x && dec_cuy == txn_y,
                   "transaction coordinates must be latched on acceptance");
+            check(dec_a_avail == dec_txn_a_avail && dec_b_avail == dec_txn_b_avail,
+                  "A/B availability must be latched on acceptance");
+            held_a_avail = dec_txn_a_avail;
+            held_b_avail = dec_txn_b_avail;
             @(negedge clk_vc);
             ccu2irpu_valid     = 1'b0;
             ccu2irpu_mvd       = 32'h0;
@@ -147,6 +161,10 @@ module tb_vc_mvp_dec_ctrl;
             ccu2irpu_sub_idx   = 2'd0;
             dec_txn_cux        = 3'd0;
             dec_txn_cuy        = 3'd0;
+            dec_txn_a_avail    = 2'd0;
+            dec_txn_b_avail    = 3'd0;
+            check(dec_a_avail == held_a_avail && dec_b_avail == held_b_avail,
+                  "changing raw availability after accept must not alter context");
         end
     endtask
 
@@ -230,6 +248,8 @@ module tb_vc_mvp_dec_ctrl;
             held_sub_idx   = dec_sub_idx;
             held_cux       = dec_cux;
             held_cuy       = dec_cuy;
+            held_a_avail   = dec_a_avail;
+            held_b_avail   = dec_b_avail;
 
             for (i = 0; i < 3; i = i + 1) begin
                 @(negedge clk_vc);
@@ -240,7 +260,8 @@ module tb_vc_mvp_dec_ctrl;
                 check(dec_mvd[0] == held_mvd0 && dec_mvd[1] == held_mvd1 &&
                       dec_ref_idx == held_ref && dec_is_skip == held_skip &&
                       dec_part_mode == held_part_mode && dec_sub_idx == held_sub_idx &&
-                      dec_cux == held_cux && dec_cuy == held_cuy,
+                      dec_cux == held_cux && dec_cuy == held_cuy &&
+                      dec_a_avail == held_a_avail && dec_b_avail == held_b_avail,
                       "held transaction context must stay stable in DEC_SEND");
             end
 
@@ -258,7 +279,7 @@ module tb_vc_mvp_dec_ctrl;
     task slice_flush_case;
         begin
             accept_txn(1'b0, 1'b0, 2'd0, 3'd6, 3'd2,
-                       16'h1111, 16'h2222, 4'd2);
+                       16'h1111, 16'h2222, 4'd0);
             @(negedge clk_vc);
             neib_done_amvp = 1'b1;
             @(posedge clk_vc);
@@ -274,6 +295,8 @@ module tb_vc_mvp_dec_ctrl;
                   "reg_slice_go must synchronously return controller to idle");
             check(dec_expected_sub_idx == 2'd0,
                   "reg_slice_go must reset expected P8 sub-index");
+            check(dec_a_avail == 2'd0 && dec_b_avail == 3'd0,
+                  "reg_slice_go must clear registered A/B availability");
             check(!dec_neib_start && !dec_cand_start && !dec_recon_start,
                   "reg_slice_go must clear stale stage pulses");
             @(negedge clk_vc);
@@ -284,7 +307,7 @@ module tb_vc_mvp_dec_ctrl;
     task codec_mode_flush_case;
         begin
             accept_txn(1'b0, 1'b0, 2'd0, 3'd1, 3'd6,
-                       16'h3333, 16'h4444, 4'd3);
+                       16'h3333, 16'h4444, 4'd0);
             @(negedge clk_vc);
             codec_mode = 1'b0;
             check(!irpu2ccu_rdy, "ready must be low while codec_mode is zero");
@@ -295,6 +318,8 @@ module tb_vc_mvp_dec_ctrl;
             check(dec_expected_sub_idx == 2'd0 &&
                   !dec_neib_start && !dec_cand_start && !dec_recon_start,
                   "codec_mode flush must clear order state and stale pulses");
+            check(dec_a_avail == 2'd0 && dec_b_avail == 3'd0,
+                  "codec_mode zero must clear registered A/B availability");
             @(negedge clk_vc);
             ccu2irpu_valid = 1'b1;
             check(!irpu2ccu_rdy, "codec_mode zero must block new admission");
@@ -319,6 +344,8 @@ module tb_vc_mvp_dec_ctrl;
         ccu2irpu_sub_idx = 2'd0;
         dec_txn_cux = 3'd0;
         dec_txn_cuy = 3'd0;
+        dec_txn_a_avail = 2'd0;
+        dec_txn_b_avail = 3'd0;
         neib_done_amvp = 1'b0;
         cand_capture_done = 1'b0;
         recon_done = 1'b0;
@@ -329,16 +356,24 @@ module tb_vc_mvp_dec_ctrl;
         vc_rst_z = 1'b1;
         #1;
         check(irpu2ccu_rdy, "reset must leave controller ready in decoder mode");
+        check(dec_a_avail == 2'd0 && dec_b_avail == 3'd0,
+              "reset must clear registered A/B availability");
 
         $display("CASE A: P16 normal transaction and mc_commit retirement");
+        dec_txn_a_avail = 2'b11;
+        dec_txn_b_avail = 3'b101;
         accept_txn(1'b0, 1'b0, 2'd0, 3'd1, 3'd2,
-                   16'h1234, 16'h5678, 4'd3);
+                   16'h1234, 16'h5678, 4'd0);
         complete_transaction(2'd0);
 
         $display("CASE B: MC backpressure and held-context stability");
+        dec_txn_a_avail = 2'b01;
+        dec_txn_b_avail = 3'b011;
         mc_backpressure_case;
 
         $display("CASE C: P8 S0 -> S1 -> S2 -> S3 commit ordering");
+        dec_txn_a_avail = 2'b10;
+        dec_txn_b_avail = 3'b110;
         accept_txn(1'b0, 1'b1, 2'd0, 3'd0, 3'd0,
                    16'h1000, 16'h2000, 4'd0);
         complete_transaction(2'd1);
@@ -353,12 +388,16 @@ module tb_vc_mvp_dec_ctrl;
         complete_transaction(2'd0);
 
         $display("CASE D: out-of-order P8 input (expected protocol error)");
+        dec_txn_a_avail = 2'b00;
+        dec_txn_b_avail = 3'b001;
         accept_txn(1'b0, 1'b1, 2'd2, 3'd4, 3'd4,
-                   16'h3000, 16'h4000, 4'd1);
+                   16'h3000, 16'h4000, 4'd0);
         complete_transaction(2'd3);
         check(irpu2ccu_rdy, "out-of-order P8 must not deadlock ready");
 
         $display("CASE E: P_SKIP legality (illegal form emits error, legal form retires)");
+        dec_txn_a_avail = 2'b11;
+        dec_txn_b_avail = 3'b111;
         accept_txn(1'b1, 1'b0, 2'd1, 3'd5, 3'd1,
                    16'h0000, 16'h0000, 4'd0);
         complete_transaction(2'd0);
@@ -370,13 +409,17 @@ module tb_vc_mvp_dec_ctrl;
         complete_transaction(2'd0);
 
         $display("CASE F: reg_slice_go flush while busy");
+        dec_txn_a_avail = 2'b01;
+        dec_txn_b_avail = 3'b100;
         slice_flush_case;
 
         $display("CASE G: codec_mode deassertion flush and re-entry");
+        dec_txn_a_avail = 2'b10;
+        dec_txn_b_avail = 3'b010;
         codec_mode_flush_case;
 
         if (errors == 0)
-            $display("T00 RESULT: PASS (Cases A-G; D and illegal P_SKIP emitted expected protocol errors)");
+            $display("T00 RESULT: PASS (Cases A-G; B, D, and illegal P_SKIP emitted expected protocol errors)");
         else begin
             $display("T00 RESULT: FAIL (%0d self-check failures)", errors);
             $fatal(1);
