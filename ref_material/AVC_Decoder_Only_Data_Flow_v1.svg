@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2800" height="1680" viewBox="0 0 2800 1680">
+  <title>AVC-only Decoder Motion Data Flow v1</title>
+  <desc>Proposed AVC-only decoder MVP and motion-compensation data flow. It is derived from the encoder-reference AVC A/B/C median and neighbor-cache behavior while removing encoder-only search and cost paths.</desc>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,4 L0,8 Z" fill="#1f2937"/></marker>
+    <marker id="arr-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,4 L0,8 Z" fill="#2563a6"/></marker>
+    <marker id="arr-orange" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,4 L0,8 Z" fill="#c27803"/></marker>
+    <marker id="arr-purple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,4 L0,8 Z" fill="#805ad5"/></marker>
+    <marker id="arr-cyan" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,4 L0,8 Z" fill="#27899b"/></marker>
+    <style>
+      .title{font:700 40px 'DejaVu Sans',sans-serif;fill:#111827}
+      .subtitle{font:15px 'DejaVu Sans',sans-serif;fill:#475569}
+      .lane{font:700 15px 'DejaVu Sans',sans-serif;fill:#64748b;letter-spacing:1.2px}
+      .h1{font:700 19px 'DejaVu Sans',sans-serif;fill:#111827}
+      .h2{font:700 15px 'DejaVu Sans',sans-serif;fill:#111827}
+      .txt{font:14px 'DejaVu Sans',sans-serif;fill:#1f2937}
+      .sig{font:13px 'DejaVu Sans Mono',monospace;fill:#111827}
+      .small{font:12px 'DejaVu Sans',sans-serif;fill:#374151}
+      .tiny{font:11px 'DejaVu Sans',sans-serif;fill:#475569}
+      .main{fill:none;stroke:#1f2937;stroke-width:2.2;marker-end:url(#arr)}
+      .blue-line{fill:none;stroke:#2563a6;stroke-width:2.2;marker-end:url(#arr-blue)}
+      .orange-line{fill:none;stroke:#c27803;stroke-width:2.2;marker-end:url(#arr-orange)}
+      .purple-line{fill:none;stroke:#805ad5;stroke-width:2.2;marker-end:url(#arr-purple)}
+      .cyan-line{fill:none;stroke:#27899b;stroke-width:2.2;marker-end:url(#arr-cyan)}
+      .dash{stroke-dasharray:8 6}
+      .blue{fill:#eef7ff;stroke:#2563a6;stroke-width:2}
+      .orange{fill:#fff8e6;stroke:#c27803;stroke-width:2}
+      .purple{fill:#f7f0ff;stroke:#805ad5;stroke-width:2}
+      .green{fill:#effcf3;stroke:#2f855a;stroke-width:2}
+      .red{fill:#fff5f5;stroke:#c53030;stroke-width:2}
+      .cyan{fill:#ecfeff;stroke:#27899b;stroke-width:2}
+      .gray{fill:#f7fafc;stroke:#4b5563;stroke-width:2}
+      .round{rx:12;ry:12}
+      .sep{stroke:#94a3b8;stroke-width:1;stroke-dasharray:4 4}
+    </style>
+  </defs>
+
+  <rect width="2800" height="1680" fill="#ffffff"/>
+  <text x="1400" y="52" text-anchor="middle" class="title">AVC-only Decoder Motion Data Flow — v1</text>
+  <text x="1400" y="82" text-anchor="middle" class="subtitle">Target architecture derived from src_encoder_ref AVC neighbor / median behavior; the current src_codec_dev decoder draft is used only as a cross-check</text>
+
+  <rect x="40" y="104" width="2720" height="70" class="orange round" stroke-dasharray="7 5"/>
+  <text x="70" y="132" class="h2">Scope</text>
+  <text x="145" y="132" class="txt">AVC P decoder only · phase-1 partitions: P16x16, P8x8 and P_Skip(P16) · one List0 motion transaction at a time</text>
+  <text x="70" y="158" class="h2">Removed</text>
+  <text x="162" y="158" class="txt">FME actual-MV input · all-reference search · MVD Exp-Golomb cost · candidate/MC-cost selection · AMVP/MRG encoder result queues · HEVC path</text>
+
+  <!-- Lane 1 -->
+  <text x="40" y="220" class="lane">LANE 1 — PARSED SYNTAX, ADMISSION AND PARTITION ORDERING</text>
+  <line x1="40" y1="232" x2="2760" y2="232" stroke="#cbd5e1"/>
+
+  <rect x="40" y="265" width="470" height="325" class="blue round"/>
+  <text x="275" y="298" text-anchor="middle" class="h1">Parser / Syntax Controller</text>
+  <line x1="40" y1="315" x2="510" y2="315" stroke="#2563a6"/>
+  <text x="62" y="347" class="sig">ccu2irpu_valid</text>
+  <text x="62" y="373" class="sig">ccu2irpu_mvd[x,y][15:0]</text>
+  <text x="62" y="399" class="sig">ccu2irpu_ref_idx_l0</text>
+  <text x="62" y="425" class="sig">ccu2irpu_is_skip</text>
+  <text x="62" y="451" class="sig">ccu2irpu_part_mode / sub_idx</text>
+  <line x1="62" y1="470" x2="488" y2="470" class="sep"/>
+  <text x="62" y="501" class="small">CTU/CU coordinates and A/B availability</text>
+  <text x="62" y="527" class="small">come from the decoded-block controller.</text>
+  <text x="62" y="565" class="sig">return: irpu2ccu_rdy</text>
+
+  <rect x="570" y="265" width="650" height="325" class="purple round"/>
+  <text x="895" y="298" text-anchor="middle" class="h1">Admission + One-entry Context Hold</text>
+  <line x1="570" y1="315" x2="1220" y2="315" stroke="#805ad5"/>
+  <text x="592" y="347" class="h2">Accept only when</text>
+  <text x="606" y="377" class="txt">• no pending command and no held MC result</text>
+  <text x="606" y="405" class="txt">• ref_idx is legal and the partition order is legal</text>
+  <text x="606" y="433" class="txt">• P_Skip is paired with P16, never P8</text>
+  <line x1="592" y1="453" x2="1198" y2="453" class="sep"/>
+  <text x="592" y="483" class="sig">accept = ccu2irpu_valid &amp; irpu2ccu_rdy</text>
+  <text x="592" y="516" class="small">Latch MVD, ref_idx, skip, size, sub_idx,</text>
+  <text x="592" y="540" class="small">CU/picture coordinates and availability.</text>
+  <text x="592" y="568" class="sig">payload remains stable until mc_commit</text>
+
+  <rect x="1280" y="265" width="680" height="325" class="orange round"/>
+  <text x="1620" y="298" text-anchor="middle" class="h1">AVC Partition Sequencer</text>
+  <line x1="1280" y1="315" x2="1960" y2="315" stroke="#c27803"/>
+  <text x="1302" y="347" class="h2">P16x16</text>
+  <text x="1410" y="347" class="sig">one command · base position · blk16</text>
+  <text x="1302" y="391" class="h2">P8x8</text>
+  <text x="1410" y="391" class="sig">sub0 → sub1 → sub2 → sub3 · blk8</text>
+  <text x="1302" y="423" class="small">cu += {sub_idx[1],sub_idx[0]}; pixel += 8 per axis.</text>
+  <text x="1302" y="451" class="small">A later sub-block starts only after the prior MC commit.</text>
+  <line x1="1302" y1="471" x2="1938" y2="471" class="sep"/>
+  <text x="1302" y="501" class="h2">Reference rule</text>
+  <text x="1434" y="501" class="small">use parsed ref_idx directly; do not iterate all refs.</text>
+  <text x="1302" y="540" class="sig">outputs: neib_start + transaction_context</text>
+  <text x="1302" y="568" class="sig">input: mc_commit / slice_flush</text>
+
+  <rect x="2020" y="265" width="740" height="325" class="gray round"/>
+  <text x="2390" y="298" text-anchor="middle" class="h1">Transaction Contract</text>
+  <line x1="2020" y1="315" x2="2760" y2="315" stroke="#4b5563"/>
+  <text x="2042" y="350" class="txt">1 accepted syntax transaction</text>
+  <text x="2330" y="350" class="sig">→ 1 reconstructed final MV</text>
+  <text x="2042" y="390" class="txt">1 reconstructed final MV</text>
+  <text x="2330" y="390" class="sig">→ 1 MC request + 1 commit</text>
+  <line x1="2042" y1="414" x2="2738" y2="414" class="sep"/>
+  <text x="2042" y="446" class="small">Backpressure freezes the held context and final-MV payload.</text>
+  <text x="2042" y="474" class="small">Slice flush clears pending context, result and P8 order state.</text>
+  <text x="2042" y="514" class="small">Phase-1 does not cover P16x8, P8x16 or sub-8x8 modes.</text>
+  <text x="2042" y="551" class="small">Those modes require a wider partition descriptor and scheduler.</text>
+
+  <path d="M510 385 H570" class="blue-line"/>
+  <text x="540" y="371" text-anchor="middle" class="tiny">valid + payload</text>
+  <path d="M570 545 H540 V565 H510" class="purple-line"/>
+  <text x="540" y="581" text-anchor="middle" class="tiny">ready</text>
+  <path d="M1220 405 H1280" class="main"/>
+  <text x="1250" y="391" text-anchor="middle" class="tiny">accepted context</text>
+  <path d="M1960 405 H2020" class="orange-line dash"/>
+
+  <!-- Lane 2 -->
+  <text x="40" y="650" class="lane">LANE 2 — AVC SPATIAL MVP, FINAL-MV RECONSTRUCTION AND MC DELIVERY</text>
+  <line x1="40" y1="662" x2="2760" y2="662" stroke="#cbd5e1"/>
+
+  <rect x="40" y="720" width="330" height="430" class="gray round"/>
+  <text x="205" y="752" text-anchor="middle" class="h1">Motion Context</text>
+  <line x1="40" y1="768" x2="370" y2="768" stroke="#4b5563"/>
+  <text x="62" y="801" class="h2">External</text>
+  <text x="73" y="829" class="sig">A/B motion-info SRAM</text>
+  <text x="73" y="855" class="sig">List0 reference context</text>
+  <line x1="62" y1="877" x2="348" y2="877" class="sep"/>
+  <text x="62" y="907" class="h2">Local / current CTU</text>
+  <text x="73" y="935" class="sig">left/top A/B cache</text>
+  <text x="73" y="961" class="small">data: {ref_idx,mvy,mvx}</text>
+  <text x="73" y="985" class="small">availability is separate.</text>
+  <line x1="62" y1="1007" x2="348" y2="1007" class="sep"/>
+  <text x="62" y="1037" class="small">P8 sub-blocks observe final MVs</text>
+  <text x="62" y="1061" class="small">committed by earlier sub-blocks.</text>
+  <text x="62" y="1118" class="sig">write on mc_commit</text>
+
+  <rect x="430" y="720" width="440" height="430" class="purple round"/>
+  <text x="650" y="752" text-anchor="middle" class="h1">AVC Neighbor Manager</text>
+  <line x1="430" y1="768" x2="870" y2="768" stroke="#805ad5"/>
+  <text x="452" y="801" class="h2">Spatial view</text>
+  <text x="466" y="833" class="sig">A = A1 (left)</text>
+  <text x="466" y="861" class="sig">B = B1 (above)</text>
+  <text x="466" y="889" class="sig">C = B0 (above-right)</text>
+  <text x="466" y="915" class="sig">    else B2 (above-left)</text>
+  <line x1="452" y1="937" x2="848" y2="937" class="sep"/>
+  <text x="452" y="967" class="small">Apply picture/slice/CTU and decoded-block</text>
+  <text x="452" y="991" class="small">availability before exposing A/B/C.</text>
+  <text x="452" y="1031" class="sig">neib_start → req/return → neib_done</text>
+  <text x="452" y="1071" class="small">No colocated/temporal candidate is used</text>
+  <text x="452" y="1095" class="small">by this AVC median path.</text>
+  <text x="452" y="1125" class="sig">out: A/B/C + avail + edge flags</text>
+
+  <rect x="930" y="720" width="440" height="430" class="green round"/>
+  <text x="1150" y="752" text-anchor="middle" class="h1">AVC MVP Derivation</text>
+  <line x1="930" y1="768" x2="1370" y2="768" stroke="#2f855a"/>
+  <text x="952" y="801" class="h2">Normal inter prediction</text>
+  <text x="966" y="833" class="sig">mvp.x = median_s16(A.x,B.x,C.x)</text>
+  <text x="966" y="861" class="sig">mvp.y = median_s16(A.y,B.y,C.y)</text>
+  <text x="952" y="895" class="small">Missing inputs are zero-masked; one available</text>
+  <text x="952" y="919" class="small">source is forwarded; none produces zero.</text>
+  <line x1="952" y1="941" x2="1348" y2="941" class="sep"/>
+  <text x="952" y="971" class="h2">P_Skip predictor (encoder-bit-exact rule)</text>
+  <text x="966" y="1003" class="sig">skip_zero = top_edge | left_edge</text>
+  <text x="966" y="1029" class="sig">          | (B.avail &amp; B.mv==0)</text>
+  <text x="966" y="1055" class="sig">          | (A.avail &amp; A.mv==0)</text>
+  <text x="966" y="1087" class="sig">skip_mvp = skip_zero ? 0 : mvp</text>
+  <text x="952" y="1125" class="small">There is one deterministic AVC MVP; no cost selection.</text>
+
+  <rect x="1430" y="720" width="440" height="430" class="red round"/>
+  <text x="1650" y="752" text-anchor="middle" class="h1">Final-MV Reconstruction</text>
+  <line x1="1430" y1="768" x2="1870" y2="768" stroke="#c53030"/>
+  <text x="1452" y="801" class="h2">Inter</text>
+  <text x="1517" y="801" class="sig">final_mv = s16(mvp + parsed_mvd)</text>
+  <text x="1517" y="829" class="sig">final_ref = parsed_ref_idx_l0</text>
+  <line x1="1452" y1="853" x2="1848" y2="853" class="sep"/>
+  <text x="1452" y="883" class="h2">P_Skip</text>
+  <text x="1532" y="883" class="sig">final_mv = skip_mvp</text>
+  <text x="1532" y="911" class="sig">final_ref = 0</text>
+  <text x="1532" y="939" class="small">parsed MVD/ref are ignored.</text>
+  <line x1="1452" y1="963" x2="1848" y2="963" class="sep"/>
+  <text x="1452" y="993" class="small">Output packet:</text>
+  <text x="1466" y="1021" class="sig">{pic_x,pic_y,size,sub_idx,</text>
+  <text x="1466" y="1047" class="sig"> final_ref,final_mvy,final_mvx}</text>
+  <text x="1452" y="1091" class="small">MVP + MVD is signed component-wise.</text>
+  <text x="1452" y="1125" class="small">The result is not committed before MC accepts it.</text>
+
+  <rect x="1930" y="720" width="360" height="430" class="blue round"/>
+  <text x="2110" y="752" text-anchor="middle" class="h1">Result Hold</text>
+  <line x1="1930" y1="768" x2="2290" y2="768" stroke="#2563a6"/>
+  <text x="1952" y="801" class="sig">dec_mv_valid_q</text>
+  <text x="1952" y="829" class="sig">dec_final_mv_q</text>
+  <text x="1952" y="857" class="sig">dec_ref/pos/size/sub_q</text>
+  <line x1="1952" y1="879" x2="2268" y2="879" class="sep"/>
+  <text x="1952" y="909" class="small">Payload stays stable while MC</text>
+  <text x="1952" y="933" class="small">applies backpressure.</text>
+  <text x="1952" y="975" class="sig">set: final_mv_fire</text>
+  <text x="1952" y="1003" class="sig">clear: mc_commit</text>
+  <line x1="1952" y1="1025" x2="2268" y2="1025" class="sep"/>
+  <text x="1952" y="1055" class="small">Blocks the next syntax command</text>
+  <text x="1952" y="1079" class="small">until the current result commits.</text>
+  <text x="1952" y="1125" class="sig">out: dec2mc_valid + data</text>
+
+  <rect x="2350" y="720" width="410" height="430" class="cyan round"/>
+  <text x="2555" y="752" text-anchor="middle" class="h1">MC Interface Adapter</text>
+  <line x1="2350" y1="768" x2="2760" y2="768" stroke="#27899b"/>
+  <text x="2372" y="801" class="h2">Core interface</text>
+  <text x="2386" y="829" class="sig">dec2mc_valid / dec2mc_data</text>
+  <text x="2386" y="857" class="sig">mc2dec_ack</text>
+  <line x1="2372" y1="879" x2="2738" y2="879" class="sep"/>
+  <text x="2372" y="909" class="h2">Current fabric mapping</text>
+  <text x="2386" y="939" class="sig">P8  → mrg2mc lane0, h/v=1</text>
+  <text x="2386" y="967" class="sig">P16 → mrg2mc lane1, h/v=2</text>
+  <text x="2372" y="1007" class="small">candidate_nb = 0; cost_ack = 0.</text>
+  <text x="2372" y="1031" class="small">No MC cost-return path exists.</text>
+  <line x1="2372" y1="1053" x2="2738" y2="1053" class="sep"/>
+  <text x="2372" y="1083" class="sig">mc_commit = valid &amp; ack</text>
+  <text x="2372" y="1125" class="small">MC consumes final MV, ref, position and size.</text>
+
+  <!-- Lane 2 connectors -->
+  <path d="M430 815 H370" class="purple-line"/>
+  <text x="400" y="801" text-anchor="middle" class="tiny">req/addr</text>
+  <path d="M370 870 H430" class="purple-line"/>
+  <text x="400" y="892" text-anchor="middle" class="tiny">return</text>
+  <path d="M870 905 H930" class="main"/>
+  <text x="900" y="891" text-anchor="middle" class="tiny">A/B/C</text>
+  <path d="M1370 905 H1430" class="main"/>
+  <text x="1400" y="891" text-anchor="middle" class="tiny">mvp / skip_mvp</text>
+  <path d="M1870 905 H1930" class="main"/>
+  <text x="1900" y="891" text-anchor="middle" class="tiny">final motion</text>
+  <path d="M2290 875 H2350" class="blue-line"/>
+  <text x="2320" y="861" text-anchor="middle" class="tiny">valid+data</text>
+  <path d="M2350 1025 H2320 V1050 H2290" class="cyan-line"/>
+  <text x="2320" y="1070" text-anchor="middle" class="tiny">ack</text>
+
+  <!-- sequencer fan-out, kept above the Lane-2 boxes -->
+  <path d="M1480 590 V680 H650 V720" class="orange-line dash"/>
+  <text x="1040" y="674" text-anchor="middle" class="tiny">neib_start + selected partition</text>
+  <path d="M1770 590 V700 H1650 V720" class="purple-line dash"/>
+  <text x="1778" y="690" class="tiny">held MVD/ref/skip/position</text>
+
+  <!-- Lane 3 -->
+  <text x="40" y="1235" class="lane">LANE 3 — ACCEPTED-RESULT COMMIT (THE ONLY ARCHITECTURAL UPDATE POINT)</text>
+  <line x1="40" y1="1247" x2="2760" y2="1247" stroke="#cbd5e1"/>
+
+  <rect x="320" y="1300" width="2160" height="260" class="cyan round"/>
+  <text x="1400" y="1335" text-anchor="middle" class="h1">Atomic Commit on mc_commit</text>
+  <line x1="320" y1="1352" x2="2480" y2="1352" stroke="#27899b"/>
+  <line x1="1040" y1="1378" x2="1040" y2="1528" class="sep"/>
+  <line x1="1760" y1="1378" x2="1760" y2="1528" class="sep"/>
+  <text x="680" y="1398" text-anchor="middle" class="h2">1 · Commit final motion info</text>
+  <text x="680" y="1430" text-anchor="middle" class="sig">neib_cur_cu_upd = 1</text>
+  <text x="680" y="1458" text-anchor="middle" class="small">write {final_ref,final_mvy,final_mvx}</text>
+  <text x="680" y="1482" text-anchor="middle" class="small">into the current-CTU A/B cache</text>
+  <text x="680" y="1512" text-anchor="middle" class="small">before the next dependent P8 block</text>
+
+  <text x="1400" y="1398" text-anchor="middle" class="h2">2 · Complete the transaction</text>
+  <text x="1400" y="1430" text-anchor="middle" class="sig">clear pending + result_valid</text>
+  <text x="1400" y="1458" text-anchor="middle" class="small">emit decoder motion-done event</text>
+  <text x="1400" y="1482" text-anchor="middle" class="small">to the syntax / reconstruction controller</text>
+  <text x="1400" y="1512" text-anchor="middle" class="small">one accepted input is now retired</text>
+
+  <text x="2120" y="1398" text-anchor="middle" class="h2">3 · Advance partition order</text>
+  <text x="2120" y="1430" text-anchor="middle" class="sig">P16: return idle</text>
+  <text x="2120" y="1458" text-anchor="middle" class="sig">P8: expected_sub_idx++</text>
+  <text x="2120" y="1488" text-anchor="middle" class="small">sub3 closes the four-beat macroblock</text>
+  <text x="2120" y="1516" text-anchor="middle" class="small">and re-opens admission for the next block</text>
+
+  <path d="M2555 1150 V1300" class="cyan-line"/>
+  <text x="2572" y="1222" class="tiny">mc_commit</text>
+
+  <!-- clean feedback around the outside of the data path -->
+  <path d="M520 1300 H20 V1110 H40" class="cyan-line dash"/>
+  <text x="35" y="1210" class="tiny">final motion update</text>
+  <path d="M2280 1300 H2780 V630 H1840 V590" class="orange-line dash"/>
+  <text x="2580" y="622" class="tiny">commit / advance / release</text>
+
+  <!-- Footer -->
+  <rect x="40" y="1600" width="1160" height="48" class="gray round" stroke-dasharray="6 4"/>
+  <rect x="62" y="1615" width="18" height="16" class="blue"/><text x="90" y="1628" class="tiny">interface / hold</text>
+  <rect x="230" y="1615" width="18" height="16" class="orange"/><text x="258" y="1628" class="tiny">control / order</text>
+  <rect x="407" y="1615" width="18" height="16" class="purple"/><text x="435" y="1628" class="tiny">context / neighbor</text>
+  <rect x="610" y="1615" width="18" height="16" class="green"/><text x="638" y="1628" class="tiny">MVP derivation</text>
+  <rect x="790" y="1615" width="18" height="16" class="red"/><text x="818" y="1628" class="tiny">MV reconstruction</text>
+  <rect x="1000" y="1615" width="18" height="16" class="cyan"/><text x="1028" y="1628" class="tiny">MC / commit</text>
+  <text x="2760" y="1628" text-anchor="end" class="tiny">Reference baseline: src_encoder_ref/{ve_mvp_top,ve_amvp_top,vc_mvp_ctrl,vc_mvp_get_neib,vc_mvp_cand_gen}.v</text>
+  <text x="2760" y="1652" text-anchor="end" class="tiny">Design note: the previous src_codec_dev decoder draft is not treated as the architectural source of truth.</text>
+</svg>
