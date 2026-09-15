@@ -18,11 +18,16 @@ module vc_mvp_dec_ctrl (
     input                   ccu2irpu_part_mode,
     input      [1:0]        ccu2irpu_sub_idx,
 
+    // Decoder transaction coordinates are 8x8-slot bases; P8 sub-block
+    // expansion belongs exclusively to the Neighbor command adapter.
     input      [2:0]        dec_txn_cux,
     input      [2:0]        dec_txn_cuy,
     input      [1:0]        dec_txn_a_avail,
     input      [2:0]        dec_txn_b_avail,
 
+    // T01-B2 must qualify raw Neighbor completion with an in-flight request;
+    // idle flags can already be high before dec_neib_start launches work.
+    // T01-B2 must also verify blk_sz_lat_amvp timing for read and no-read paths.
     input                   neib_done_amvp,
     input                   cand_capture_done,
     input                   recon_done,

@@ -374,16 +374,17 @@ module tb_vc_mvp_dec_ctrl;
         $display("CASE C: P8 S0 -> S1 -> S2 -> S3 commit ordering");
         dec_txn_a_avail = 2'b10;
         dec_txn_b_avail = 3'b110;
-        accept_txn(1'b0, 1'b1, 2'd0, 3'd0, 3'd0,
+        // Controller receives one common P8 base; the adapter expands sub_idx.
+        accept_txn(1'b0, 1'b1, 2'd0, 3'd2, 3'd2,
                    16'h1000, 16'h2000, 4'd0);
         complete_transaction(2'd1);
-        accept_txn(1'b0, 1'b1, 2'd1, 3'd1, 3'd0,
+        accept_txn(1'b0, 1'b1, 2'd1, 3'd2, 3'd2,
                    16'h1001, 16'h2001, 4'd0);
         complete_transaction(2'd2);
-        accept_txn(1'b0, 1'b1, 2'd2, 3'd0, 3'd1,
+        accept_txn(1'b0, 1'b1, 2'd2, 3'd2, 3'd2,
                    16'h1002, 16'h2002, 4'd0);
         complete_transaction(2'd3);
-        accept_txn(1'b0, 1'b1, 2'd3, 3'd1, 3'd1,
+        accept_txn(1'b0, 1'b1, 2'd3, 3'd2, 3'd2,
                    16'h1003, 16'h2003, 4'd0);
         complete_transaction(2'd0);
 
