@@ -678,6 +678,7 @@ U_VC_AMVP_CTRL
 .clk_vc				(clk_vc),
 .vc_rst_z			(vc_rst_z),
 .reg_avc_mode       (reg_avc_mode),
+.decoder_mode       (avc_dec_en),
 .reg_i_slice		(reg_i_slice),
 .reg_slice_go		(reg_slice_go),
 .reg_num_ref_l0_act_m1(ctrl_num_ref_l0_act_m1),

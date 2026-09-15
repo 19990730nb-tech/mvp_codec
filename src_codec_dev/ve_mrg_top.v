@@ -719,6 +719,7 @@ U_VC_MRG_CTRL
 .reg_i_slice            ( reg_i_slice),
 .reg_slice_go           ( reg_slice_go),
 .reg_avc_mode           ( reg_avc_mode),
+.decoder_mode           ( 1'b0),
 .reg_num_ref_l0_act_m1  ( 4'd0),
 .cur_ctu_start          ( cur_ctu_start),
 .cur_cu_start           ( cur_cu_start),

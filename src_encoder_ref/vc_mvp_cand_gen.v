@@ -41,10 +41,10 @@ input	[1:0][33:0] 	neib_a,
 // poc_diff[32+:8],
 // long[41]
 // intra[40]
-input	[-1:0][41:0] 	col_c,
-input	[-1:0]	 		col_c_avail,
+input	[1:0][41:0] 	col_c,
+input	[1:0]	 		col_c_avail,
 //----- reflist -----
-// poc [-1+:32]
+// poc [1+:32]
 // long[31]
 input	[NUM_REF-1:0][32:0] reflist_info,
 input	[1:0]			cur_ref_idx,

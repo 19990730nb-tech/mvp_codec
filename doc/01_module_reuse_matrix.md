@@ -12,4 +12,4 @@
 | `ve_mrg_top.v`        | Merge encoder top    | 只参考，不直接复用            |
 | `ve_irpu_expg_bits.v` | MVD bit cost         | Decoder 不需要，删除          |
 | `ve_mvp_top.v`        | Encoder MVP top      | 只参考层级，不直接改           |
-| `ve_defines.v`        | 宏定义                  | 可参考，需核对依赖            |
+| `ve_defines.v`        | 宏定义                  | 可参考，需核对依赖,不更改    |

@@ -35,6 +35,9 @@ output  [6:0]               dbg_fsm_mvp_cs,
 input                       clk_vc,
 input                       vc_rst_z,
 input                       reg_avc_mode,
+// Decoder keeps the existing reference-slot traversal, but uses a decoder-
+// specific block-size path and reference cursor update.
+input                       decoder_mode,
 input                       reg_i_slice,
 input                       reg_slice_go,
 input   [ 3:0]              reg_num_ref_l0_act_m1,
@@ -292,14 +295,30 @@ if(AMVP_OR_MRG) begin : fsm_amvp_ctrl
                     fsm_mvp_ns[AMVP_WAIT_CU_START] = 1;
             end
             fsm_mvp_cs[AMVP_WAIT_NEIB_DONE] : begin
-                if( neib_done_con )
-                    fsm_mvp_ns[AMVP_CAND_BLK8] = 1;
+                if( neib_done_con ) begin
+                    if(decoder_mode) begin
+                        // A decoder transaction contains one selected block
+                        // size.  Do not run an empty smaller-size queue first.
+                        if(empty_n[0])
+                            fsm_mvp_ns[AMVP_CAND_BLK8] = 1;
+                        else if(empty_n[1])
+                            fsm_mvp_ns[AMVP_CAND_BLK16] = 1;
+                        else if(empty_n[2])
+                            fsm_mvp_ns[AMVP_CAND_BLK32] = 1;
+                        else
+                            fsm_mvp_ns[AMVP_WAIT_CU_START] = 1;
+                    end
+                    else
+                        fsm_mvp_ns[AMVP_CAND_BLK8] = 1;
+                end
                 else
                     fsm_mvp_ns[AMVP_WAIT_NEIB_DONE] = 1;
             end
             fsm_mvp_cs[AMVP_CAND_BLK8] : begin
                 if( cand_blk_done ) begin
-                    if(empty_n[1])
+                    if(decoder_mode)
+                        fsm_mvp_ns[AMVP_BLK_DONE] = 1;
+                    else if(empty_n[1])
                         fsm_mvp_ns[AMVP_CAND_BLK16] = 1;
                     else if(empty_n[2])
                         fsm_mvp_ns[AMVP_CAND_BLK32] = 1;
@@ -311,7 +330,9 @@ if(AMVP_OR_MRG) begin : fsm_amvp_ctrl
             end
             fsm_mvp_cs[AMVP_CAND_BLK16] : begin
                 if( cand_blk_done ) begin
-                    if(empty_n[2])
+                    if(decoder_mode)
+                        fsm_mvp_ns[AMVP_BLK_DONE] = 1;
+                    else if(empty_n[2])
                         fsm_mvp_ns[AMVP_CAND_BLK32] = 1;
                     else// if(empty_n[2])
                         fsm_mvp_ns[AMVP_BLK_DONE] = 1;
@@ -457,6 +478,27 @@ generate
         always@(posedge clk_vc or negedge vc_rst_z)begin
             if(~vc_rst_z) begin
                 cur_ref_idx_r <= 0;
+            end
+            else if( decoder_mode && |cmdq_cu_start ) begin
+                // Every decoder transaction starts its reference traversal at
+                // List0 ref0; the parsed ref_idx is selected at the join stage.
+                cur_ref_idx_r <= 0;
+            end
+            else if( decoder_mode && cand_blk_done ) begin
+                // ref_idx[] is the current reference before its same-edge
+                // increment below.  Advance the cursor for the active size.
+                if(cand_blk_sz[1]) begin
+                    if(ref_idx[1] == num_ref_m1)
+                        cur_ref_idx_r <= 0;
+                    else
+                        cur_ref_idx_r <= ref_idx[1] + 1;
+                end
+                else if(cand_blk_sz[0]) begin
+                    if(ref_idx[0] == num_ref_m1)
+                        cur_ref_idx_r <= 0;
+                    else
+                        cur_ref_idx_r <= ref_idx[0] + 1;
+                end
             end
             else if( cand_blk_done & (&cur_ref_upd) ) begin
                 if(cur_ref_idx_r == num_ref_m1 )
