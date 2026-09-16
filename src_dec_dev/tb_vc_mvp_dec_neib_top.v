@@ -1169,6 +1169,20 @@ module tb_vc_mvp_dec_neib_top;
         @(negedge clk_vc);
         check(barrier_hold_accept_count == 1,
               "held valid transaction must be accepted exactly once");
+        check(barrier_fresh_accept_cycle > barrier_a_zero_cycle,
+              "fresh acceptance must follow A outstanding drain");
+        check(barrier_fresh_accept_cycle > barrier_b_zero_cycle,
+              "fresh acceptance must follow B outstanding drain");
+        if (barrier_stale_a_last_cycle >= 0)
+            check(barrier_fresh_accept_cycle > barrier_stale_a_last_cycle,
+                  "fresh acceptance must follow final stale A response");
+        if (barrier_stale_b_last_cycle >= 0)
+            check(barrier_fresh_accept_cycle > barrier_stale_b_last_cycle,
+                  "fresh acceptance must follow final stale B response");
+        check(barrier_ready_reopen_cycle >= barrier_a_zero_cycle,
+              "ready reopen must not precede A outstanding drain");
+        check(barrier_ready_reopen_cycle >= barrier_b_zero_cycle,
+              "ready reopen must not precede B outstanding drain");
         wait_for_neighbor;
         check(first_a_req_cycle > barrier_a_zero_cycle &&
               first_b_req_cycle > barrier_b_zero_cycle,
@@ -1247,9 +1261,10 @@ module tb_vc_mvp_dec_neib_top;
                  stale_a_rd_lat_count, stale_b_rd_lat_count);
 
         if (errors == 0)
-            $display("T01-B2.3 RESULT: PASS");
+            $display("T01-B2.3.1 RESULT: PASS");
         else begin
-            $display("T01-B2.3 RESULT: FAIL (%0d self-check failures)", errors);
+            $display("T01-B2.3.1 RESULT: FAIL (%0d self-check failures)", errors);
+            $fatal(1);
         end
         $finish;
     end
