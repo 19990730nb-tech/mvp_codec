@@ -415,8 +415,14 @@ module tb_vc_mvp_dec_backend_top;
                                              x_f, y_f, a_f, b_f);
             check(dec_selected_cu_cmd === command_f,
                   "Candidate seam must receive exact selected command");
-            check((^amvp_neib_a) !== 1'bx && (^amvp_neib_b) !== 1'bx,
-                  "real A/B Neighbor values must be known at Candidate seam");
+            check(!a_f[1] || ((^amvp_neib_a[1]) !== 1'bx),
+                  "available AVC A1 must be known at Candidate seam");
+            check(!b_f[0] || ((^amvp_neib_b[0]) !== 1'bx),
+                  "available AVC B0 must be known at Candidate seam");
+            check(!b_f[1] || ((^amvp_neib_b[1]) !== 1'bx),
+                  "available AVC B1 must be known at Candidate seam");
+            check(!b_f[2] || ((^amvp_neib_b[2]) !== 1'bx),
+                  "available AVC B2 must be known at Candidate seam");
             check(dec_ctux === ctu_x_f && dec_ctuy === ctu_y_f &&
                   dec_cux === x_f && dec_cuy === y_f,
                   "Candidate seam coordinates must be accepted transaction context");
@@ -519,9 +525,14 @@ module tb_vc_mvp_dec_backend_top;
                   "only the mode-selected MC lane may be valid");
             check(dec_mrg2mc_cand_data[lane_f] === packet_f,
                   "MC packet must match the real reconstructed MV and held context");
-            check(dec_mrg2mc_cand_data[lane_f][37:36] === (part_f ? 2'd1 : 2'd2) &&
-                  dec_mrg2mc_cand_data[lane_f][35:34] === (part_f ? 2'd1 : 2'd2),
-                  "both packet size fields must match P8/P16/P_SKIP mode");
+            if (part_f)
+                check(dec_mrg2mc_cand_data[0][37:36] === 2'd1 &&
+                      dec_mrg2mc_cand_data[0][35:34] === 2'd1,
+                      "both P8 packet size fields must be one");
+            else
+                check(dec_mrg2mc_cand_data[1][37:36] === 2'd2 &&
+                      dec_mrg2mc_cand_data[1][35:34] === 2'd2,
+                      "both P16/P_SKIP packet size fields must be two");
             if (part_f)
                 check(dec_mrg2mc_cand_data[1] === {MRG2MC_DW{1'b0}} &&
                       dec_mrg2mc_cand_data[2] === {MRG2MC_DW{1'b0}},
