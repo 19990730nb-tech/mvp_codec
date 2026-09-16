@@ -1,5 +1,5 @@
-// T01-B2/T06-B directed integration checks for the real Decoder Neighbor
-// hierarchy, including same-edge MC retirement into rolling A/B state.
+// T01-B2/T06-B/T07-A directed checks for the real Decoder Neighbor
+// hierarchy, including held transaction plumbing and same-edge rolling state.
 
 `timescale 1ns/1ps
 
@@ -31,6 +31,7 @@ module tb_vc_mvp_dec_neib_top;
     reg      [1:0]        dec_txn_a_avail;
     reg      [2:0]        dec_txn_b_avail;
     reg      [6:0]        dec_txn_ctux;
+    reg      [6:0]        dec_txn_ctuy;
     reg      [6:0]        reg_pic_width_ctu_m1;
 
     reg                   cand_capture_done;
@@ -41,6 +42,7 @@ module tb_vc_mvp_dec_neib_top;
     wire                  dec_neib_start;
     wire                  dec_cand_start;
     wire                  dec_recon_start;
+    wire                  dec_send;
     wire     [1:0][15:0]  dec_mvd;
     wire     [3:0]        dec_ref_idx;
     wire                  dec_is_skip;
@@ -48,6 +50,11 @@ module tb_vc_mvp_dec_neib_top;
     wire     [1:0]        dec_sub_idx;
     wire     [2:0]        dec_cux;
     wire     [2:0]        dec_cuy;
+    wire     [6:0]        dec_ctux;
+    wire     [6:0]        dec_ctuy;
+    wire                  dec_is_pic_top16;
+    wire                  dec_is_pic_left16;
+    wire     [16:0]       dec_selected_cu_cmd;
     wire     [1:0]        dec_a_avail;
     wire     [2:0]        dec_b_avail;
     wire     [1:0]        dec_expected_sub_idx;
@@ -195,6 +202,7 @@ module tb_vc_mvp_dec_neib_top;
         .dec_txn_a_avail      (dec_txn_a_avail),
         .dec_txn_b_avail      (dec_txn_b_avail),
         .dec_txn_ctux         (dec_txn_ctux),
+        .dec_txn_ctuy         (dec_txn_ctuy),
         .reg_pic_width_ctu_m1 (reg_pic_width_ctu_m1),
         .cand_capture_done    (cand_capture_done),
         .recon_done           (recon_done),
@@ -204,6 +212,7 @@ module tb_vc_mvp_dec_neib_top;
         .dec_neib_start       (dec_neib_start),
         .dec_cand_start       (dec_cand_start),
         .dec_recon_start      (dec_recon_start),
+        .dec_send             (dec_send),
         .dec_mvd              (dec_mvd),
         .dec_ref_idx          (dec_ref_idx),
         .dec_is_skip          (dec_is_skip),
@@ -211,6 +220,11 @@ module tb_vc_mvp_dec_neib_top;
         .dec_sub_idx          (dec_sub_idx),
         .dec_cux              (dec_cux),
         .dec_cuy              (dec_cuy),
+        .dec_ctux             (dec_ctux),
+        .dec_ctuy             (dec_ctuy),
+        .dec_is_pic_top16     (dec_is_pic_top16),
+        .dec_is_pic_left16    (dec_is_pic_left16),
+        .dec_selected_cu_cmd  (dec_selected_cu_cmd),
         .dec_a_avail          (dec_a_avail),
         .dec_b_avail          (dec_b_avail),
         .dec_expected_sub_idx (dec_expected_sub_idx),
@@ -813,6 +827,106 @@ module tb_vc_mvp_dec_neib_top;
         end
     endfunction
 
+    function [16:0] expected_selected_command;
+        input [2:0] block_size;
+        input       skip_flag;
+        input [1:0] a_available;
+        input [2:0] b_available;
+        input [2:0] physical_y;
+        input [2:0] physical_x;
+        begin
+            expected_selected_command = {block_size, 1'b0, skip_flag, 1'b0,
+                                         a_available, b_available,
+                                         physical_y, physical_x};
+        end
+    endfunction
+
+    task check_selected_command;
+        input [2:0] block_size;
+        input       skip_flag;
+        input [1:0] a_available;
+        input [2:0] b_available;
+        input [2:0] physical_y;
+        input [2:0] physical_x;
+        input [8*96-1:0] message;
+        reg [16:0] held_command;
+        reg [6:0] held_ctux;
+        reg [6:0] held_ctuy;
+        reg held_top;
+        reg held_left;
+        begin
+            held_command = expected_selected_command(block_size, skip_flag,
+                                                     a_available, b_available,
+                                                     physical_y, physical_x);
+            held_ctux = dec_ctux;
+            held_ctuy = dec_ctuy;
+            held_top = dec_is_pic_top16;
+            held_left = dec_is_pic_left16;
+            check(dec_selected_cu_cmd === held_command, message);
+            check(dec_selected_cu_cmd[16:14] === block_size, message);
+            check(dec_selected_cu_cmd[13] === 1'b0 &&
+                  dec_selected_cu_cmd[11] === 1'b0, message);
+            check(dec_selected_cu_cmd[12] === skip_flag, message);
+            check(dec_selected_cu_cmd[10:9] === a_available, message);
+            check(dec_selected_cu_cmd[8:6] === b_available, message);
+            check(dec_selected_cu_cmd[5:3] === physical_y &&
+                  dec_selected_cu_cmd[2:0] === physical_x, message);
+
+            // Perturb every live command/coordinate source after acceptance.
+            ccu2irpu_valid      = 1'b0;
+            ccu2irpu_is_skip    = ~skip_flag;
+            ccu2irpu_part_mode  = (block_size != 3'b001);
+            ccu2irpu_sub_idx    = 2'b11;
+            dec_txn_cux         = 3'd7;
+            dec_txn_cuy         = 3'd6;
+            dec_txn_a_avail     = 2'b00;
+            dec_txn_b_avail     = 3'b000;
+            dec_txn_ctux        = 7'd85;
+            dec_txn_ctuy        = 7'd42;
+            #1;
+            check(dec_selected_cu_cmd === held_command,
+                  "selected command must remain stable after upstream mutation");
+            check(dec_ctux === held_ctux && dec_ctuy === held_ctuy,
+                  "held CTU coordinates must ignore post-accept upstream mutation");
+            check(dec_is_pic_top16 === held_top &&
+                  dec_is_pic_left16 === held_left,
+                  "picture flags must ignore post-accept upstream mutation");
+            $display("T07-A SELECTED CMD: %0s value=%05h size=%b skip=%b A=%b B=%b Y=%0d X=%0d",
+                     message, held_command, held_command[16:14],
+                     held_command[12], held_command[10:9],
+                     held_command[8:6], held_command[5:3],
+                     held_command[2:0]);
+        end
+    endtask
+
+    task check_picture_flags;
+        input expected_top;
+        input expected_left;
+        input [8*96-1:0] message;
+        reg [6:0] held_ctux;
+        reg [6:0] held_ctuy;
+        begin
+            held_ctux = dec_ctux;
+            held_ctuy = dec_ctuy;
+            check(dec_is_pic_top16 === expected_top, message);
+            check(dec_is_pic_left16 === expected_left, message);
+            // Live values are intentionally unrelated to the accepted context.
+            dec_txn_ctux = 7'd19;
+            dec_txn_ctuy = 7'd37;
+            dec_txn_cux = 3'd7;
+            dec_txn_cuy = 3'd6;
+            #1;
+            check(dec_ctux === held_ctux && dec_ctuy === held_ctuy,
+                  "boundary flags must use held CTU coordinates");
+            check(dec_is_pic_top16 === expected_top &&
+                  dec_is_pic_left16 === expected_left,
+                  "boundary flags must remain stable after live-coordinate mutation");
+            $display("T07-A BOUNDARY: %0s CTU=(%0d,%0d) CU=(%0d,%0d) top=%b left=%b",
+                     message, held_ctux, held_ctuy, dec_cux, dec_cuy,
+                     dec_is_pic_top16, dec_is_pic_left16);
+        end
+    endtask
+
     task start_transaction;
         input              txn_skip;
         input              txn_part_mode;
@@ -902,31 +1016,87 @@ module tb_vc_mvp_dec_neib_top;
         input [31:0] final_mv;
         input [3:0] final_refidx;
         integer commits_before;
+        integer bp_cycle;
+        integer send_enter_cycle;
+        reg [16:0] held_command;
+        reg [6:0] held_ctux;
+        reg [6:0] held_ctuy;
+        reg held_top;
+        reg held_left;
         begin
             @(posedge clk_vc);
             #1;
             check(dec_cand_start && !neib_done_amvp,
                   "qualified Neighbor completion must produce one candidate pulse");
+            check(!dec_send, "dec_send must be low before candidate/reconstruction completion");
             check(!neib_pending, "pending must clear when qualified completion is consumed");
             @(negedge clk_vc);
             cand_capture_done = 1'b1;
             @(posedge clk_vc);
             #1;
             check(dec_recon_start, "candidate completion must produce recon pulse");
+            check(!dec_send, "dec_send must remain low before DEC_SEND entry");
             @(negedge clk_vc);
             cand_capture_done = 1'b0;
             recon_done = 1'b1;
+            check(!dec_send, "dec_send must not assert before recon_done is sampled");
             @(posedge clk_vc);
             #1;
             check(dec_busy && !irpu2ccu_rdy,
                   "controller must hold the transaction before MC commit");
-            @(negedge clk_vc);
-            recon_done = 1'b0;
+            check(dec_send, "dec_send must assert on entry to DEC_SEND");
+            send_enter_cycle = cycle_count;
             dec_final_mv = final_mv;
             dec_final_ref_idx = final_refidx;
+            held_command = dec_selected_cu_cmd;
+            held_ctux = dec_ctux;
+            held_ctuy = dec_ctuy;
+            held_top = dec_is_pic_top16;
+            held_left = dec_is_pic_left16;
+
+            // Hold MC acceptance off for two complete cycles while changing
+            // every live upstream syntax/coordinate source.
+            for (bp_cycle = 0; bp_cycle < 2; bp_cycle = bp_cycle + 1) begin
+                @(negedge clk_vc);
+                ccu2irpu_valid      = 1'b0;
+                ccu2irpu_is_skip    = ~dec_is_skip;
+                ccu2irpu_part_mode  = ~dec_part_mode;
+                ccu2irpu_sub_idx    = ~dec_sub_idx;
+                ccu2irpu_mvd        = 32'hdead_beef;
+                ccu2irpu_ref_idx    = 4'hf;
+                dec_txn_cux         = ~dec_cux;
+                dec_txn_cuy         = ~dec_cuy;
+                dec_txn_a_avail     = ~dec_a_avail;
+                dec_txn_b_avail     = ~dec_b_avail;
+                dec_txn_ctux        = 7'h55;
+                dec_txn_ctuy        = 7'h2a;
+                check(dec_send && !mc_commit && !irpu2ccu_rdy,
+                      "dec_send must remain asserted under MC backpressure");
+                check(dec_selected_cu_cmd === held_command,
+                      "selected MC command context must hold during backpressure");
+                check(dec_ctux === held_ctux && dec_ctuy === held_ctuy,
+                      "held CTU coordinates must hold during backpressure");
+                check(dec_is_pic_top16 === held_top &&
+                      dec_is_pic_left16 === held_left,
+                      "picture flags must hold during backpressure");
+                check(dec_final_mv === final_mv &&
+                      dec_final_ref_idx === final_refidx,
+                      "final MV/ref packet context must hold while upstream changes");
+                @(posedge clk_vc);
+                #1;
+                check(dec_send && !mc_commit && !irpu2ccu_rdy,
+                      "dec_send must persist across each backpressure clock edge");
+                check(dec_selected_cu_cmd === held_command &&
+                      dec_ctux === held_ctux && dec_ctuy === held_ctuy,
+                      "command and CTU packet context must remain stable at backpressure edge");
+            end
+
+            @(negedge clk_vc);
+            recon_done = 1'b0;
             commits_before = mc_commit_count;
             mc_commit = 1'b1;
             #1;
+            check(dec_send, "dec_send must remain high until mc_commit is sampled");
             check_update_for_retirement(final_mv, final_refidx,
                                         "combinational update before retirement edge");
             if (dec_part_mode && (dec_sub_idx === 2'd0) &&
@@ -942,6 +1112,14 @@ module tb_vc_mvp_dec_neib_top;
             #1;
             check(!dec_busy && irpu2ccu_rdy,
                   "MC commit must retire the integrated transaction");
+            check(!dec_send,
+                  "dec_send must fall only after the edge sampling mc_commit");
+            check(dec_ctux === held_ctux && dec_ctuy === held_ctuy &&
+                  dec_selected_cu_cmd === held_command,
+                  "held CTU and selected command must remain stable through retirement");
+            check(dec_final_mv === final_mv &&
+                  dec_final_ref_idx === final_refidx,
+                  "final MV/ref packet context must remain stable through retirement");
             check(mc_commit_count == commits_before + 1,
                   "one-cycle mc_commit must be sampled on exactly one edge");
             check(update_sample_count == commits_before + 1,
@@ -965,6 +1143,10 @@ module tb_vc_mvp_dec_neib_top;
             mc_commit = 1'b0;
             #1;
             check_update_zero("update and payload clear immediately after commit falls");
+            if ((held_ctux == 7'd5) && (held_ctuy == 7'd3))
+                $display("T07-A SEND/CTU TRACE: send_enter=%0d backpressure_cycles=2 CTU=(%0d,%0d) command=%05h commit_cycle=%0d send_after_commit=%b",
+                         send_enter_cycle, held_ctux, held_ctuy,
+                         held_command, cycle_count, dec_send);
         end
     endtask
 
@@ -1062,6 +1244,7 @@ module tb_vc_mvp_dec_neib_top;
         dec_txn_a_avail = 2'd0;
         dec_txn_b_avail = 3'd0;
         dec_txn_ctux = 7'd0;
+        dec_txn_ctuy = 7'd0;
         reg_pic_width_ctu_m1 = 7'd7;
         cand_capture_done = 1'b0;
         recon_done = 1'b0;
@@ -1088,6 +1271,9 @@ module tb_vc_mvp_dec_neib_top;
         mc_commit = 1'b0;
         repeat (2) @(posedge clk_vc);
         @(negedge clk_vc);
+        check(!dec_send, "Neighbor top dec_send must be low in reset");
+        check(dec_ctux === 7'd0 && dec_ctuy === 7'd0,
+              "Neighbor top held CTU coordinates must clear in reset");
         vc_rst_z = 1'b1;
 
         // Verify the adapter's guards directly with commit high, without
@@ -1109,6 +1295,8 @@ module tb_vc_mvp_dec_neib_top;
         a_count_before = a_req_count;
         b_count_before = b_req_count;
         start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
+        check_selected_command(3'b010, 1'b0, 2'b11, 3'b111,
+                               3'd2, 3'd2, "P16 lane-1 selected command");
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P16 A/B availability must launch SRAM reads");
@@ -1125,7 +1313,10 @@ module tb_vc_mvp_dec_neib_top;
         $display("CASE B: P8 S0 external reads");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
+        dec_txn_ctuy = 7'd0;
         start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
+        check_selected_command(3'b001, 1'b0, 2'b11, 3'b111,
+                               3'd2, 3'd2, "P8 S0 lane-0 selected command");
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P8 S0 must launch external A/B reads");
@@ -1136,8 +1327,11 @@ module tb_vc_mvp_dec_neib_top;
         $display("CASE C: P8 S1 internal A/no-read path");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
+        dec_txn_ctuy = 7'd0;
         start_transaction_earliest(1'b0, 1'b1, 2'd1, 3'd2, 3'd2,
                                    2'b11, 3'b000, 7'd0);
+        check_selected_command(3'b001, 1'b0, 2'b11, 3'b000,
+                               3'd2, 3'd3, "P8 S1 lane-0 expanded command");
         check(s1_accept_cycle == s0_commit_cycle + 1,
               "P8 S1 acceptance is the first edge after S0 retirement");
         $display("T06-B S1 EARLIEST ACCEPT: S0_commit_cycle=%0d S1_accept_cycle=%0d",
@@ -1152,10 +1346,35 @@ module tb_vc_mvp_dec_neib_top;
               "P8 S1 must retain the prior internal B neighbor view");
         retire_controller(32'h2666_6666, 4'd0);
 
+        $display("CASE C2: P8 S2 selected-command expansion");
+        dec_txn_ctuy = 7'd0;
+        start_transaction(1'b0, 1'b1, 2'd2, 3'd2, 3'd2,
+                          2'b00, 3'b000, 7'd0);
+        check_selected_command(3'b001, 1'b0, 2'b00, 3'b000,
+                               3'd3, 3'd2, "P8 S2 lane-0 expanded command");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "P8 S2 zero-availability command must require no external reads");
+        retire_controller(32'h2a2a_2a2a, 4'd0);
+
+        $display("CASE C3: P8 S3 selected-command expansion");
+        dec_txn_ctuy = 7'd0;
+        start_transaction(1'b0, 1'b1, 2'd3, 3'd2, 3'd2,
+                          2'b00, 3'b000, 7'd0);
+        check_selected_command(3'b001, 1'b0, 2'b00, 3'b000,
+                               3'd3, 3'd3, "P8 S3 lane-0 expanded command");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "P8 S3 zero-availability command must require no external reads");
+        retire_controller(32'h3a3a_3a3a, 4'd0);
+
         $display("CASE D: P_SKIP retains spatial Neighbor acquisition");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
+        dec_txn_ctuy = 7'd0;
         start_transaction(1'b1, 1'b0, 2'd0, 3'd4, 3'd4, 2'b11, 3'b111, 7'd0);
+        check_selected_command(3'b010, 1'b1, 2'b11, 3'b111,
+                               3'd4, 3'd4, "P_SKIP lane-1 selected command");
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P_SKIP must not suppress blk16 A/B reads");
@@ -1388,6 +1607,45 @@ module tb_vc_mvp_dec_neib_top;
         retire_controller(FRESH_LOCAL_A[31:0], {2'b00, FRESH_LOCAL_A[33:32]});
         barrier_test_active = 1'b0;
 
+        $display("CASE N: T07-A accepted picture-boundary context");
+        dec_txn_ctuy = 7'd0;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd0, 3'd0,
+                          2'b00, 3'b000, 7'd0);
+        check_picture_flags(1'b1, 1'b1, "top-left boundary");
+        check_selected_command(3'b010, 1'b0, 2'b00, 3'b000,
+                               3'd0, 3'd0, "boundary P16 command");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "top-left boundary transaction must be no-read");
+        retire_controller(32'h1010_1010, 4'd0);
+
+        dec_txn_ctuy = 7'd0;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd0, 3'd0,
+                          2'b00, 3'b000, 7'd1);
+        check_picture_flags(1'b1, 1'b0, "top-only boundary");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "top-only boundary transaction must be no-read");
+        retire_controller(32'h2020_2020, 4'd0);
+
+        dec_txn_ctuy = 7'd1;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd0, 3'd0,
+                          2'b00, 3'b000, 7'd0);
+        check_picture_flags(1'b0, 1'b1, "left-only boundary");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "left-only boundary transaction must be no-read");
+        retire_controller(32'h3030_3030, 4'd0);
+
+        dec_txn_ctuy = 7'd3;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd0, 3'd0,
+                          2'b00, 3'b000, 7'd5);
+        check_picture_flags(1'b0, 1'b0, "interior boundary");
+        wait_for_neighbor;
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "interior boundary transaction must be no-read");
+        retire_controller(32'h4040_4040, 4'd0);
+
         check(col_req_count == 0, "no Col requests are legal in Decoder mode");
         check(ref_req_count == 0, "no RefList requests are legal in Decoder mode");
         check(update_sample_count == mc_commit_count,
@@ -1402,9 +1660,11 @@ module tb_vc_mvp_dec_neib_top;
         if (errors == 0) begin
             $display("T01-B2.3.1 RESULT: PASS");
             $display("T06-B ROLLING UPDATE INTEGRATION RESULT: PASS");
+            $display("T07-A INTEGRATION PLUMBING RESULT: PASS");
         end else begin
             $display("T01-B2.3.1 RESULT: FAIL (%0d self-check failures)", errors);
             $display("T06-B ROLLING UPDATE INTEGRATION RESULT: FAIL");
+            $display("T07-A INTEGRATION PLUMBING RESULT: FAIL");
             $fatal(1);
         end
         $finish;

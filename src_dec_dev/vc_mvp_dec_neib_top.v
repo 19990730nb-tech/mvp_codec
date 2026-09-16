@@ -31,6 +31,7 @@ module vc_mvp_dec_neib_top #(
     // CTU X is part of the active AVC B-neighbor SRAM address.  The decoder
     // wrapper latches it with the accepted transaction.
     input      [VC_CTU_X_NB-1:0] dec_txn_ctux,
+    input      [VC_CTU_Y_NB-1:0] dec_txn_ctuy,
     // The legacy B address generator uses this configuration in addition to
     // ctux/cux/cuy; the remaining picture geometry is Col-path-only here.
     input      [VC_CTU_X_NB-1:0] reg_pic_width_ctu_m1,
@@ -43,6 +44,7 @@ module vc_mvp_dec_neib_top #(
     output                  dec_neib_start,
     output                  dec_cand_start,
     output                  dec_recon_start,
+    output                  dec_send,
     output     [1:0][15:0]  dec_mvd,
     output     [3:0]        dec_ref_idx,
     output                  dec_is_skip,
@@ -50,6 +52,11 @@ module vc_mvp_dec_neib_top #(
     output     [1:0]        dec_sub_idx,
     output     [2:0]        dec_cux,
     output     [2:0]        dec_cuy,
+    output     [VC_CTU_X_NB-1:0] dec_ctux,
+    output     [VC_CTU_Y_NB-1:0] dec_ctuy,
+    output                  dec_is_pic_top16,
+    output                  dec_is_pic_left16,
+    output     [16:0]       dec_selected_cu_cmd,
     output     [1:0]        dec_a_avail,
     output     [2:0]        dec_b_avail,
     output     [1:0]        dec_expected_sub_idx,
@@ -90,6 +97,9 @@ module vc_mvp_dec_neib_top #(
     wire                    raw_neib_done_amvp_w;
     reg                     neib_pending_q;
     reg      [VC_CTU_X_NB-1:0] dec_ctux_q;
+    reg      [VC_CTU_Y_NB-1:0] dec_ctuy_q;
+    reg      [VC_CTU_X_NB-1:0] dec_ctux_prev_q;
+    reg      [VC_CTU_Y_NB-1:0] dec_ctuy_prev_q;
     reg      [3:0]          neib_a_read_pending_q;
     reg      [3:0]          neib_b_read_pending_q;
     wire                    neib_reg_slice_go;
@@ -102,6 +112,7 @@ module vc_mvp_dec_neib_top #(
     wire     [2:0]          n_blk_sz_amvp;
     wire                    blk_sz_lat_amvp;
     wire     [2:0][13:0]     amvp_cmd_out;
+    wire     [13:0]          selected_amvp_cmd;
     wire                    amvp_cu_start;
     wire     [2:0][13:0]     mrg_cmd_out;
     wire     [2:0]          mrg_blk_sz;
@@ -157,6 +168,7 @@ module vc_mvp_dec_neib_top #(
         .dec_neib_start       (dec_neib_start),
         .dec_cand_start       (dec_cand_start),
         .dec_recon_start      (dec_recon_start),
+        .dec_send             (dec_send),
         .dec_mvd              (dec_mvd),
         .dec_ref_idx          (dec_ref_idx),
         .dec_is_skip          (dec_is_skip),
@@ -189,6 +201,11 @@ module vc_mvp_dec_neib_top #(
         .n_blk_sz_amvp   (n_blk_sz_amvp),
         .blk_sz_lat_amvp (blk_sz_lat_amvp)
     );
+
+    // Export the exact lane command already formed by the Decoder adapter.
+    // P8 uses lane 0; P16/P_SKIP use the selected blk16 lane 1.
+    assign selected_amvp_cmd = dec_part_mode ? amvp_cmd_out[0] : amvp_cmd_out[1];
+    assign dec_selected_cu_cmd = {amvp_blk_sz, selected_amvp_cmd};
 
     // MC acceptance is also the rolling-state write event.  This mapping is
     // combinational so U_GET_NEIB samples the retiring transaction on the
@@ -229,6 +246,10 @@ module vc_mvp_dec_neib_top #(
     assign ctrl_ccu2irpu_valid = ccu2irpu_valid && neib_mem_quiescent;
     assign irpu2ccu_rdy = ctrl_irpu2ccu_rdy && neib_mem_quiescent;
     assign dec_accept = ccu2irpu_valid && irpu2ccu_rdy;
+    assign dec_ctux = dec_ctux_q;
+    assign dec_ctuy = dec_ctuy_q;
+    assign dec_is_pic_top16 = ({dec_ctuy_q, dec_cuy[2:1]} == 0);
+    assign dec_is_pic_left16 = ({dec_ctux_q, dec_cux} == 0);
 
     // Raw completion is level-sensitive idle status.  Pending is set only
     // after launch, and public read tracking drains queued A/B responses so a
@@ -250,6 +271,15 @@ module vc_mvp_dec_neib_top #(
             dec_ctux_q <= {VC_CTU_X_NB{1'b0}};
         else if (dec_accept)
             dec_ctux_q <= dec_txn_ctux;
+    end
+
+    always @(posedge clk_vc or negedge vc_rst_z) begin
+        if (~vc_rst_z)
+            dec_ctuy_q <= {VC_CTU_Y_NB{1'b0}};
+        else if (reg_slice_go || !codec_mode)
+            dec_ctuy_q <= {VC_CTU_Y_NB{1'b0}};
+        else if (dec_accept)
+            dec_ctuy_q <= dec_txn_ctuy;
     end
 
     always @(posedge clk_vc or negedge vc_rst_z) begin
@@ -344,7 +374,7 @@ module vc_mvp_dec_neib_top #(
         .reg_num_ref_l0_act_m1(4'd0),
         .cur_ctu_start        (1'b0),
         .ctux                 (dec_ctux_q),
-        .ctuy                 ({VC_CTU_Y_NB{1'b0}}),
+        .ctuy                 (dec_ctuy_q),
         .pic_x                (12'd0),
         .pic_y                (12'd0),
         .amvp_cu_start        (amvp_cu_start),
@@ -375,5 +405,34 @@ module vc_mvp_dec_neib_top #(
         .n_blk_sz_mrg        (n_blk_sz_mrg),
         .n_blk_sz_amvp       (n_blk_sz_amvp)
     );
+
+`ifndef SYNTHESIS
+    // Integration-plumbing checks are diagnostic only and never gate outputs.
+    always @(posedge clk_vc or negedge vc_rst_z) begin
+        if (~vc_rst_z) begin
+            dec_ctux_prev_q <= {VC_CTU_X_NB{1'b0}};
+            dec_ctuy_prev_q <= {VC_CTU_Y_NB{1'b0}};
+        end
+        else if (reg_slice_go || !codec_mode) begin
+            dec_ctux_prev_q <= {VC_CTU_X_NB{1'b0}};
+            dec_ctuy_prev_q <= {VC_CTU_Y_NB{1'b0}};
+        end
+        else begin
+            if (dec_send &&
+                ((dec_ctux_q !== dec_ctux_prev_q) ||
+                 (dec_ctuy_q !== dec_ctuy_prev_q)))
+                $error("vc_mvp_dec_neib_top: held CTU coordinate changed during dec_send");
+            dec_ctux_prev_q <= dec_ctux_q;
+            dec_ctuy_prev_q <= dec_ctuy_q;
+
+            if (dec_send && irpu2ccu_rdy)
+                $error("vc_mvp_dec_neib_top: dec_send overlaps irpu2ccu_rdy");
+            if (mc_commit && !dec_send)
+                $error("vc_mvp_dec_neib_top: mc_commit asserted outside dec_send");
+            if (dec_cand_start && (^dec_selected_cu_cmd === 1'bx))
+                $error("vc_mvp_dec_neib_top: selected command contains X/Z on dec_cand_start");
+        end
+    end
+`endif
 
 endmodule

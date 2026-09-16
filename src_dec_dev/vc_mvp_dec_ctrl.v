@@ -36,6 +36,7 @@ module vc_mvp_dec_ctrl (
     output                  dec_neib_start,
     output                  dec_cand_start,
     output                  dec_recon_start,
+    output                  dec_send,
 
     output     [1:0][15:0]  dec_mvd,
     output     [3:0]        dec_ref_idx,
@@ -92,6 +93,7 @@ module vc_mvp_dec_ctrl (
     assign dec_neib_start     = dec_neib_start_q;
     assign dec_cand_start     = dec_cand_start_q;
     assign dec_recon_start    = dec_recon_start_q;
+    assign dec_send           = (dec_fsm_cs == DEC_SEND);
 
     assign dec_mvd            = dec_mvd_q;
     assign dec_ref_idx        = dec_ref_idx_q;
@@ -277,6 +279,8 @@ module vc_mvp_dec_ctrl (
 
             if (mc_commit && (dec_fsm_cs != DEC_SEND))
                 $error("vc_mvp_dec_ctrl: mc_commit acted on outside DEC_SEND");
+            if (dec_send && irpu2ccu_rdy)
+                $error("vc_mvp_dec_ctrl: dec_send overlaps irpu2ccu_rdy");
 
             dec_neib_start_d  <= dec_neib_start;
             dec_cand_start_d  <= dec_cand_start;

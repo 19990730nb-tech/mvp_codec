@@ -35,6 +35,7 @@ module tb_vc_mvp_dec_ctrl;
     wire                  dec_neib_start;
     wire                  dec_cand_start;
     wire                  dec_recon_start;
+    wire                  dec_send;
     wire     [1:0][15:0]  dec_mvd;
     wire     [3:0]        dec_ref_idx;
     wire                  dec_is_skip;
@@ -84,6 +85,7 @@ module tb_vc_mvp_dec_ctrl;
         .dec_neib_start       (dec_neib_start),
         .dec_cand_start       (dec_cand_start),
         .dec_recon_start      (dec_recon_start),
+        .dec_send             (dec_send),
         .dec_mvd              (dec_mvd),
         .dec_ref_idx          (dec_ref_idx),
         .dec_is_skip          (dec_is_skip),
@@ -107,7 +109,7 @@ module tb_vc_mvp_dec_ctrl;
         input condition;
         input [8*96-1:0] message;
         begin
-            if (!condition) begin
+            if (condition !== 1'b1) begin
                 $display("FAIL: %0s (t=%0t)", message, $time);
                 errors = errors + 1;
             end
@@ -140,6 +142,7 @@ module tb_vc_mvp_dec_ctrl;
             check(dec_neib_start, "accept must produce one-cycle delayed neib_start");
             check(dec_busy && !irpu2ccu_rdy,
                   "accepted transaction must make controller busy");
+            check(!dec_send, "dec_send must remain low in DEC_NEIB");
             check(dec_mvd[0] == txn_mvx && dec_mvd[1] == txn_mvy,
                   "MVD must be latched on acceptance");
             check(dec_ref_idx == txn_ref && dec_is_skip == txn_skip,
@@ -177,6 +180,7 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(dec_cand_start && !dec_neib_start,
                   "neib_done must produce one cand_start pulse");
+            check(!dec_send, "dec_send must remain low in DEC_MVP");
 
             @(negedge clk_vc);
             neib_done_amvp    = 1'b0;
@@ -185,6 +189,7 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(dec_recon_start && !dec_cand_start,
                   "candidate capture must produce one recon_start pulse");
+            check(!dec_send, "dec_send must remain low in DEC_RECON");
 
             @(negedge clk_vc);
             cand_capture_done = 1'b0;
@@ -193,14 +198,19 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(dec_busy && !irpu2ccu_rdy && !dec_recon_start,
                   "recon_done must enter DEC_SEND while remaining busy");
+            check(dec_send && !irpu2ccu_rdy,
+                  "dec_send must assert after reconstruction enters DEC_SEND");
 
             @(negedge clk_vc);
             recon_done = 1'b0;
             mc_commit  = 1'b1;
+            check(dec_send && !irpu2ccu_rdy,
+                  "dec_send must remain high until the retirement edge");
             @(posedge clk_vc);
             #1;
             check(!dec_busy && irpu2ccu_rdy,
                   "mc_commit must retire the transaction and reopen ready");
+            check(!dec_send, "dec_send must fall after the mc_commit edge");
             check(dec_expected_sub_idx == expected_after,
                   "expected P8 sub-index must update at mc_commit");
 
@@ -216,12 +226,14 @@ module tb_vc_mvp_dec_ctrl;
             @(posedge clk_vc);
             #1;
             check(dec_cand_start, "neib_done must start candidate stage");
+            check(!dec_send, "dec_send must remain low before reconstruction completes");
             @(negedge clk_vc);
             neib_done_amvp = 1'b0;
             cand_capture_done = 1'b1;
             @(posedge clk_vc);
             #1;
             check(dec_recon_start, "candidate completion must start reconstruction");
+            check(!dec_send, "dec_send must remain low in DEC_RECON");
             @(negedge clk_vc);
             cand_capture_done = 1'b0;
             recon_done = 1'b1;
@@ -229,6 +241,8 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(dec_busy && !irpu2ccu_rdy && !dec_recon_start,
                   "reconstruction completion must enter DEC_SEND");
+            check(dec_send && !irpu2ccu_rdy,
+                  "dec_send must be low before and high only after DEC_SEND entry");
             @(negedge clk_vc);
             recon_done = 1'b0;
         end
@@ -257,6 +271,8 @@ module tb_vc_mvp_dec_ctrl;
                 #1;
                 check(dec_busy && !irpu2ccu_rdy,
                       "MC backpressure must hold DEC_SEND busy");
+                check(dec_send && !irpu2ccu_rdy && !mc_commit,
+                      "dec_send must remain high throughout MC backpressure");
                 check(dec_mvd[0] == held_mvd0 && dec_mvd[1] == held_mvd1 &&
                       dec_ref_idx == held_ref && dec_is_skip == held_skip &&
                       dec_part_mode == held_part_mode && dec_sub_idx == held_sub_idx &&
@@ -271,6 +287,7 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(!dec_busy && irpu2ccu_rdy,
                   "DEC_SEND must release only on mc_commit");
+            check(!dec_send, "dec_send must fall after the retirement edge");
             @(negedge clk_vc);
             mc_commit = 1'b0;
         end
@@ -293,6 +310,7 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(!dec_busy && irpu2ccu_rdy,
                   "reg_slice_go must synchronously return controller to idle");
+            check(!dec_send, "reg_slice_go must clear dec_send");
             check(dec_expected_sub_idx == 2'd0,
                   "reg_slice_go must reset expected P8 sub-index");
             check(dec_a_avail == 2'd0 && dec_b_avail == 3'd0,
@@ -315,6 +333,7 @@ module tb_vc_mvp_dec_ctrl;
             #1;
             check(!dec_busy && !irpu2ccu_rdy,
                   "codec_mode deassertion must synchronously clear busy state");
+            check(!dec_send, "codec_mode deassertion must clear dec_send");
             check(dec_expected_sub_idx == 2'd0 &&
                   !dec_neib_start && !dec_cand_start && !dec_recon_start,
                   "codec_mode flush must clear order state and stale pulses");
@@ -352,10 +371,13 @@ module tb_vc_mvp_dec_ctrl;
         mc_commit = 1'b0;
 
         repeat (2) @(posedge clk_vc);
+        #1;
+        check(!dec_send, "dec_send must be low while asynchronous reset is asserted");
         @(negedge clk_vc);
         vc_rst_z = 1'b1;
         #1;
         check(irpu2ccu_rdy, "reset must leave controller ready in decoder mode");
+        check(!dec_send, "reset must leave dec_send low");
         check(dec_a_avail == 2'd0 && dec_b_avail == 3'd0,
               "reset must clear registered A/B availability");
 
