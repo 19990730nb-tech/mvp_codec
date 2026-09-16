@@ -99,6 +99,8 @@ module tb_vc_mvp_dec_neib_top;
     integer first_b_req_cycle;
     integer first_a_rd_lat_cycle;
     integer first_b_rd_lat_cycle;
+    integer last_a_rd_lat_cycle;
+    integer last_b_rd_lat_cycle;
     reg     [4:0] first_b_addr;
     reg     monitor_active;
     reg     monitor_raw_seen_low;
@@ -234,6 +236,8 @@ module tb_vc_mvp_dec_neib_top;
             first_b_req_cycle         = -1;
             first_a_rd_lat_cycle      = -1;
             first_b_rd_lat_cycle      = -1;
+            last_a_rd_lat_cycle       = -1;
+            last_b_rd_lat_cycle       = -1;
             raw_done_cycle             = -1;
             qualified_cycle            = -1;
             first_b_addr               = 5'd0;
@@ -248,6 +252,8 @@ module tb_vc_mvp_dec_neib_top;
                 first_b_req_cycle         = -1;
                 first_a_rd_lat_cycle      = -1;
                 first_b_rd_lat_cycle      = -1;
+                last_a_rd_lat_cycle       = -1;
+                last_b_rd_lat_cycle       = -1;
                 raw_done_cycle             = -1;
                 qualified_cycle            = -1;
                 first_b_addr               = 5'd0;
@@ -275,11 +281,13 @@ module tb_vc_mvp_dec_neib_top;
                 if (neib_a2irpu_rd_lat) begin
                     if (first_a_rd_lat_cycle < 0)
                         first_a_rd_lat_cycle = cycle_count;
+                    last_a_rd_lat_cycle = cycle_count;
                     $display("Neighbor monitor: A rd_lat cycle=%0d", cycle_count);
                 end
                 if (neib_b2irpu_rd_lat) begin
                     if (first_b_rd_lat_cycle < 0)
                         first_b_rd_lat_cycle = cycle_count;
+                    last_b_rd_lat_cycle = cycle_count;
                     $display("Neighbor monitor: B rd_lat cycle=%0d", cycle_count);
                 end
                 if (!raw_neib_done_amvp)
@@ -289,10 +297,10 @@ module tb_vc_mvp_dec_neib_top;
                     raw_done_cycle = cycle_count;
                 if (neib_done_amvp && (qualified_cycle < 0)) begin
                     qualified_cycle = cycle_count;
-                    $display("Neighbor monitor: launch=%0d first_A_req=%0d first_B_req=%0d " +
-                             "A_rd_lat=%0d B_rd_lat=%0d raw_done=%0d qualified_done=%0d",
+                    $display("Neighbor monitor: launch=%0d first_A_req=%0d first_B_req=%0d A_rd_lat=%0d..%0d B_rd_lat=%0d..%0d raw_done=%0d qualified_done=%0d",
                              launch_cycle, first_a_req_cycle, first_b_req_cycle,
-                             first_a_rd_lat_cycle, first_b_rd_lat_cycle,
+                             first_a_rd_lat_cycle, last_a_rd_lat_cycle,
+                             first_b_rd_lat_cycle, last_b_rd_lat_cycle,
                              raw_done_cycle, qualified_cycle);
                     monitor_active = 1'b0;
                 end
@@ -467,6 +475,8 @@ module tb_vc_mvp_dec_neib_top;
         dec_txn_cuy = 3'd0;
         dec_txn_a_avail = 2'd0;
         dec_txn_b_avail = 3'd0;
+        dec_txn_ctux = 7'd0;
+        reg_pic_width_ctu_m1 = 7'd7;
         cand_capture_done = 1'b0;
         recon_done = 1'b0;
         mc_commit = 1'b0;
@@ -491,10 +501,13 @@ module tb_vc_mvp_dec_neib_top;
         $display("CASE A: P16 external A/B reads and qualified completion");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111);
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P16 A/B availability must launch SRAM reads");
+        check(qualified_cycle >= last_a_rd_lat_cycle &&
+              qualified_cycle >= last_b_rd_lat_cycle,
+              "P16 completion must not precede the final A/B rd_lat");
         check(amvp_neib_a[0] == A_WORD && amvp_neib_a[1] == A_WORD,
               "P16 A result must contain returned SRAM data");
         check(amvp_neib_b[0] == B_WORD && amvp_neib_b[1] == B_WORD &&
@@ -505,7 +518,7 @@ module tb_vc_mvp_dec_neib_top;
         $display("CASE B: P8 S0 external reads");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
-        start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111);
+        start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P8 S0 must launch external A/B reads");
@@ -517,7 +530,7 @@ module tb_vc_mvp_dec_neib_top;
         send_neighbor_update;
         a_count_before = a_req_count;
         b_count_before = b_req_count;
-        start_transaction(1'b0, 1'b1, 2'd1, 3'd2, 3'd2, 2'b11, 3'b000);
+        start_transaction(1'b0, 1'b1, 2'd1, 3'd2, 3'd2, 2'b11, 3'b000, 7'd0);
         wait_for_neighbor;
         check(a_req_count == a_count_before && b_req_count == b_count_before,
               "P8 S1 selected case must require no SRAM reads");
@@ -531,19 +544,36 @@ module tb_vc_mvp_dec_neib_top;
         $display("CASE D: P_SKIP retains spatial Neighbor acquisition");
         a_count_before = a_req_count;
         b_count_before = b_req_count;
-        start_transaction(1'b1, 1'b0, 2'd0, 3'd4, 3'd4, 2'b11, 3'b111);
+        start_transaction(1'b1, 1'b0, 2'd0, 3'd4, 3'd4, 2'b11, 3'b111, 7'd0);
         wait_for_neighbor;
         check(a_req_count > a_count_before && b_req_count > b_count_before,
               "P_SKIP must not suppress blk16 A/B reads");
         retire_controller;
 
         $display("CASE E: reg_slice_go clears pending transaction");
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111);
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
         flush_pending(1'b0);
 
         $display("CASE F: codec_mode clears pending transaction");
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111);
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
         flush_pending(1'b1);
+
+        $display("CASE G: non-zero CTU X address context 1");
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd1);
+        wait_for_neighbor;
+        check(first_b_req_cycle >= 0, "non-zero CTU case must issue a B request");
+        check(first_b_addr == expected_first_b_addr(3'd1, 3'd2, 3'd2),
+              "CTU X=1 B address must match vc_mvp_rd_mem formula");
+        retire_controller;
+
+        $display("CASE H: non-zero CTU X address context 3");
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd3);
+        wait_for_neighbor;
+        check(first_b_req_cycle >= 0, "second non-zero CTU case must issue a B request");
+        check(first_b_addr == expected_first_b_addr(3'd3, 3'd2, 3'd2),
+              "CTU X=3 B address must match vc_mvp_rd_mem formula");
+        check(first_b_addr != 5'd0, "non-zero CTU address must not use CTU-0 address");
+        retire_controller;
 
         check(col_req_count == 0, "no Col requests are legal in Decoder mode");
         check(ref_req_count == 0, "no RefList requests are legal in Decoder mode");

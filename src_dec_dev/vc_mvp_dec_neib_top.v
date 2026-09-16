@@ -186,8 +186,8 @@ module vc_mvp_dec_neib_top #(
         .blk_sz_lat_amvp (blk_sz_lat_amvp)
     );
 
-    // Launch-time capture supplies no-read/internal neighbors; an SRAM result
-    // later takes priority through neib_a2irpu_rd_lat/neib_b2irpu_rd_lat.
+    // Keep blk_sz_lat_amvp at launch: it seeds the local/no-read Neighbor view
+    // immediately, while a later A/B rd_lat overwrites it with SRAM data.
 
     assign neib_a_req_hs = irpu2neib_a_req[0] && neib_a2irpu_gnt;
     assign neib_b_req_hs = irpu2neib_b_req[0] && neib_b2irpu_gnt;
