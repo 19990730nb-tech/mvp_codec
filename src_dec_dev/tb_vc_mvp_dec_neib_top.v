@@ -103,10 +103,14 @@ module tb_vc_mvp_dec_neib_top;
     integer last_b_rd_lat_cycle;
     integer monitor_a_req_count;
     integer monitor_b_req_count;
+    integer stale_a_rd_lat_count;
+    integer stale_b_rd_lat_count;
     reg     [4:0] first_b_addr;
     reg     monitor_active;
     reg     monitor_raw_seen_low;
     reg     monitor_raw_high_at_launch;
+    reg     stale_a_event_d;
+    reg     stale_b_event_d;
 
     vc_mvp_dec_neib_top dut (
         .clk_vc               (clk_vc),
@@ -198,6 +202,10 @@ module tb_vc_mvp_dec_neib_top;
             ref_req_count      = 0;
             a_req_d            <= 1'b0;
             b_req_d            <= 1'b0;
+            stale_a_rd_lat_count = 0;
+            stale_b_rd_lat_count = 0;
+            stale_a_event_d     = 1'b0;
+            stale_b_event_d     = 1'b0;
             neib_a2irpu_rd_lat <= 1'b0;
             neib_b2irpu_rd_lat <= 1'b0;
             neib_a2irpu_rd     <= 68'd0;
@@ -209,6 +217,24 @@ module tb_vc_mvp_dec_neib_top;
             if (irpu2neib_b_req[0] && neib_b2irpu_gnt) b_req_count = b_req_count + 1;
             if (irpu2col_req)       col_req_count = col_req_count + 1;
             if (irpu2ref_req)       ref_req_count = ref_req_count + 1;
+
+            // A response seen with a zero Decoder-side count is a stale
+            // response from work discarded by a flush.  Record it separately;
+            // the wrapper must leave the count at zero rather than wrap.
+            stale_a_event_d = neib_a2irpu_rd_lat &&
+                              (dut.neib_a_read_pending_q == 4'd0);
+            stale_b_event_d = neib_b2irpu_rd_lat &&
+                              (dut.neib_b_read_pending_q == 4'd0);
+            if (stale_a_event_d) begin
+                stale_a_rd_lat_count = stale_a_rd_lat_count + 1;
+                $display("Neighbor monitor: stale A rd_lat cycle=%0d pending remains zero",
+                         cycle_count);
+            end
+            if (stale_b_event_d) begin
+                stale_b_rd_lat_count = stale_b_rd_lat_count + 1;
+                $display("Neighbor monitor: stale B rd_lat cycle=%0d pending remains zero",
+                         cycle_count);
+            end
 
             if (irpu2col_req) begin
                 $display("FAIL: unexpected Col request at cycle %0d", cycle_count);
@@ -250,6 +276,16 @@ module tb_vc_mvp_dec_neib_top;
             monitor_b_req_count        = 0;
         end
         else begin
+            if (stale_a_event_d && (dut.neib_a_read_pending_q != 4'd0))
+                begin
+                    $display("FAIL: A pending counter changed on stale rd_lat (t=%0t)", $time);
+                    errors = errors + 1;
+                end
+            if (stale_b_event_d && (dut.neib_b_read_pending_q != 4'd0))
+                begin
+                    $display("FAIL: B pending counter changed on stale rd_lat (t=%0t)", $time);
+                    errors = errors + 1;
+                end
             if (dec_neib_start) begin
                 launch_cycle              = cycle_count;
                 first_a_req_cycle         = -1;
@@ -587,6 +623,13 @@ module tb_vc_mvp_dec_neib_top;
         check(first_b_req_cycle >= 0, "non-zero CTU case must issue a B request");
         check(first_b_addr == expected_first_b_addr(3'd1, 3'd2, 3'd2),
               "CTU X=1 B address must match vc_mvp_rd_mem formula");
+        check(stale_a_rd_lat_count > 0 && stale_b_rd_lat_count > 0,
+              "flush regression must observe stale A/B rd_lat responses");
+        check(monitor_a_req_count == 2 && monitor_b_req_count == 3,
+              "fresh P16 transaction must count only its own A/B requests");
+        check(qualified_cycle >= last_a_rd_lat_cycle &&
+              qualified_cycle >= last_b_rd_lat_cycle,
+              "fresh external completion must follow its final A/B rd_lat");
         retire_controller;
 
         $display("CASE H: non-zero CTU X address context 3");
@@ -606,10 +649,36 @@ module tb_vc_mvp_dec_neib_top;
               "cux=0 B address must match field-wise vc_mvp_rd_mem wrap");
         retire_controller;
 
+        $display("CASE J: fresh P8 S0 external transaction after stale response");
+        start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd3);
+        wait_for_neighbor;
+        check(monitor_a_req_count > 0 && monitor_b_req_count > 0,
+              "fresh P8 S0 must issue A/B requests");
+        retire_controller;
+
+        $display("CASE K: fresh P8 S1 no-read transaction after stale response");
+        send_neighbor_update;
+        a_count_before = a_req_count;
+        b_count_before = b_req_count;
+        start_transaction(1'b0, 1'b1, 2'd1, 3'd2, 3'd2, 2'b11, 3'b000, 7'd3);
+        wait_for_neighbor;
+        check(a_req_count == a_count_before && b_req_count == b_count_before,
+              "fresh P8 S1 must issue no A/B SRAM request");
+        check(monitor_a_req_count == 0 && monitor_b_req_count == 0,
+              "fresh P8 S1 monitor must count zero A/B requests");
+        check(amvp_neib_a[1] == INTERNAL_WORD,
+              "fresh P8 S1 must retain its local rolling A Neighbor");
+        check(amvp_neib_b[0] == B_WORD && amvp_neib_b[1] == B_WORD &&
+              amvp_neib_b[2] == B_WORD,
+              "fresh P8 S1 must not consume stale B data");
+        retire_controller;
+
         check(col_req_count == 0, "no Col requests are legal in Decoder mode");
         check(ref_req_count == 0, "no RefList requests are legal in Decoder mode");
         $display("Request counts: A=%0d B=%0d Col=%0d RefList=%0d",
                  a_req_count, b_req_count, col_req_count, ref_req_count);
+        $display("Stale response counts: A=%0d B=%0d",
+                 stale_a_rd_lat_count, stale_b_rd_lat_count);
 
         if (errors == 0)
             $display("T01-B2 RESULT: PASS");

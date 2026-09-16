@@ -241,12 +241,22 @@ module vc_mvp_dec_neib_top #(
         else begin
             case ({neib_a_req_hs, neib_a2irpu_rd_lat})
                 2'b10: neib_a_read_pending_q <= neib_a_read_pending_q + 1'b1;
-                2'b01: neib_a_read_pending_q <= neib_a_read_pending_q - 1'b1;
+                // A late response from work discarded by Decoder flush is
+                // not part of the current transaction and must not underflow.
+                2'b01: if (neib_a_read_pending_q != 4'd0)
+                           neib_a_read_pending_q <= neib_a_read_pending_q - 1'b1;
+                       else
+                           neib_a_read_pending_q <= 4'd0;
                 default: neib_a_read_pending_q <= neib_a_read_pending_q;
             endcase
             case ({neib_b_req_hs, neib_b2irpu_rd_lat})
                 2'b10: neib_b_read_pending_q <= neib_b_read_pending_q + 1'b1;
-                2'b01: neib_b_read_pending_q <= neib_b_read_pending_q - 1'b1;
+                // See the A-direction guard above; keep stale B responses at
+                // zero rather than corrupting Decoder transaction accounting.
+                2'b01: if (neib_b_read_pending_q != 4'd0)
+                           neib_b_read_pending_q <= neib_b_read_pending_q - 1'b1;
+                       else
+                           neib_b_read_pending_q <= 4'd0;
                 default: neib_b_read_pending_q <= neib_b_read_pending_q;
             endcase
         end
