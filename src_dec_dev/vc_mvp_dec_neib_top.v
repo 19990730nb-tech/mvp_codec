@@ -1,7 +1,8 @@
 // AVC DEC: integrate the registered Decoder transaction, command adapter,
 // and legacy Neighbor engine.  It qualifies Neighbor completion and exposes
 // A/B results and memory ports; it does not implement MED, reconstruction,
-// MC, RefList traversal, or the future mc_commit rolling-state writer.
+// MC, RefList traversal, or arbitration.  MC retirement directly updates the
+// legacy rolling Neighbor state through the Decoder update adapter.
 
 module vc_mvp_dec_neib_top #(
     parameter VC_CTU_X_NB  = 7,
@@ -37,6 +38,8 @@ module vc_mvp_dec_neib_top #(
     input                   cand_capture_done,
     input                   recon_done,
     input                   mc_commit,
+    input      [31:0]       dec_final_mv,
+    input      [3:0]        dec_final_ref_idx,
     output                  dec_neib_start,
     output                  dec_cand_start,
     output                  dec_recon_start,
@@ -52,16 +55,6 @@ module vc_mvp_dec_neib_top #(
     output     [1:0]        dec_expected_sub_idx,
     output                  dec_busy,
     output     [5:0]        dbg_dec_fsm_cs,
-
-    // Existing public Neighbor update interface; this wrapper does not
-    // generate the future mc_commit-to-update path.
-    input                   cur_cu_upd,
-    input      [1:0]        cur_cu_upd_sz,
-    input      [2:0]        cur_cu_upd_x,
-    input      [2:0]        cur_cu_upd_y,
-    input      [15:0]       cur_cu_upd_mvx,
-    input      [15:0]       cur_cu_upd_mvy,
-    input      [1:0]        cur_cu_upd_refidx,
 
     // Decoder Neighbor memory interfaces.
     output     [4:0]        irpu2neib_b_req,
@@ -118,6 +111,13 @@ module vc_mvp_dec_neib_top #(
     wire                    neib_b_req_hs;
     wire                    neib_a_read_pending;
     wire                    neib_b_read_pending;
+    wire                    cur_cu_upd;
+    wire     [1:0]          cur_cu_upd_sz;
+    wire     [2:0]          cur_cu_upd_x;
+    wire     [2:0]          cur_cu_upd_y;
+    wire     [15:0]         cur_cu_upd_mvx;
+    wire     [15:0]         cur_cu_upd_mvy;
+    wire     [1:0]          cur_cu_upd_refidx;
 
     assign mrg_cmd_out = 42'd0;
     assign mrg_blk_sz = 3'b000;
@@ -188,6 +188,31 @@ module vc_mvp_dec_neib_top #(
         .amvp_blk_sz     (amvp_blk_sz),
         .n_blk_sz_amvp   (n_blk_sz_amvp),
         .blk_sz_lat_amvp (blk_sz_lat_amvp)
+    );
+
+    // MC acceptance is also the rolling-state write event.  This mapping is
+    // combinational so U_GET_NEIB samples the retiring transaction on the
+    // same edge that the controller leaves DEC_SEND.
+    vc_mvp_dec_upd_adapter U_DEC_UPD_ADAPTER (
+        .clk_vc             (clk_vc),
+        .vc_rst_z           (vc_rst_z),
+        .codec_mode         (codec_mode),
+        .reg_slice_go       (reg_slice_go),
+        .mc_commit          (mc_commit),
+        .dec_part_mode      (dec_part_mode),
+        .dec_is_skip        (dec_is_skip),
+        .dec_sub_idx        (dec_sub_idx),
+        .dec_cux            (dec_cux),
+        .dec_cuy            (dec_cuy),
+        .dec_final_mv       (dec_final_mv),
+        .dec_final_ref_idx  (dec_final_ref_idx),
+        .cur_cu_upd          (cur_cu_upd),
+        .cur_cu_upd_sz       (cur_cu_upd_sz),
+        .cur_cu_upd_x        (cur_cu_upd_x),
+        .cur_cu_upd_y        (cur_cu_upd_y),
+        .cur_cu_upd_mvx      (cur_cu_upd_mvx),
+        .cur_cu_upd_mvy      (cur_cu_upd_mvy),
+        .cur_cu_upd_refidx   (cur_cu_upd_refidx)
     );
 
     // Keep blk_sz_lat_amvp at launch: it seeds the local/no-read Neighbor view
