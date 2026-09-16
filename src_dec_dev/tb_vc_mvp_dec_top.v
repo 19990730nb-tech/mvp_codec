@@ -373,13 +373,30 @@ module tb_vc_mvp_dec_top;
         input [31:0] expected_mvp_f;
         input [31:0] expected_final_f;
         input integer stall_cycles;
-        input flush_f;
+        input integer flush_stage_f;
         integer wait_i;
         integer stall_i;
+        integer before_accept_count;
+        integer before_candidate_count;
+        integer before_recon_count;
+        integer accepted_cycle;
+        integer candidate_start_cycle;
+        integer candidate_flush_cycle;
+        integer candidate_capture_cycle;
+        integer recon_start_cycle;
+        integer recon_flush_cycle;
+        integer recovery_cycle;
         reg [16:0] command_f;
         reg [MRG2MC_DW-1:0] packet_f;
         reg [2:0] lane_mask_f;
-        begin
+        begin : transaction_flow
+            before_accept_count = accepted_count;
+            before_candidate_count = candidate_count;
+            before_recon_count = recon_count;
+            before_transfer = transfer_count;
+            before_commit = commit_count;
+            before_done = done_count;
+            before_update = update_count;
             check(irpu2ccu_rdy === 1'b1 && dec_busy === 1'b0,
                   "previous transaction must retire before accepting another");
             check(dec_expected_sub_idx === sub_f,
@@ -406,22 +423,27 @@ module tb_vc_mvp_dec_top;
             #1;
             check(dec_neib_start === 1'b1,
                   "accepted CCU beat must launch the real Neighbor hierarchy");
+            accepted_cycle = cycle_count;
             @(negedge clk_vc);
             ccu2irpu_valid = 1'b0;
 
             begin : wait_candidate_start
                 for (wait_i = 0; wait_i < 100; wait_i = wait_i + 1) begin
-                    @(negedge clk_vc);
+                    @(posedge clk_vc);
+                    #1;
                     if (dec_cand_start === 1'b1)
                         disable wait_candidate_start;
                 end
             end
             check(dec_cand_start === 1'b1 && cand_busy === 1'b0,
                   "real Neighbor completion must launch the real Candidate");
+            candidate_start_cycle = cycle_count;
             command_f = expected_command(skip_f, part_f, sub_f,
                                          x_f, y_f, a_f, b_f);
             check(dec_selected_cu_cmd === command_f,
                   "real Neighbor adapter command must match accepted context");
+            check(dut.U_CANDIDATE.candidate_mv[0][31:0] === expected_mvp_f,
+                  "real Candidate combinational result must match before capture");
             check(dec_ctux === ctu_x_f && dec_ctuy === ctu_y_f &&
                   dec_cux === x_f && dec_cuy === y_f,
                   "accepted coordinates must be held through Candidate");
@@ -452,8 +474,66 @@ module tb_vc_mvp_dec_top;
                       dut.U_BACKEND.U_RECON.dec_skip_b1_mv === amvp_neib_b[1][31:0],
                       "P_SKIP reconstruction must consume the real B1 availability/value");
 
+            lane_mask_f = part_f ? 3'b001 : 3'b010;
+            if (flush_stage_f == 2) begin
+                check(accepted_count == before_accept_count + 1 &&
+                      candidate_count == before_candidate_count &&
+                      recon_count == before_recon_count,
+                      "Candidate-flush case must be accepted but not yet captured/reconstructed");
+                @(negedge clk_vc);
+                reg_slice_go = 1'b1;
+                candidate_flush_cycle = cycle_count;
+                #1;
+                check(cand_capture_done === 1'b0 && dec_recon_start === 1'b0 &&
+                      recon_done === 1'b0 && dec_send === 1'b0 &&
+                      dec_mrg2mc_cand_rdy === 3'b000 &&
+                      dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                      dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0,
+                      "pre-capture flush must suppress all downstream completion and MC activity");
+                @(posedge clk_vc);
+                #1;
+                check(cand_capture_done === 1'b0 && dec_cand_start === 1'b0 &&
+                      dec_recon_start === 1'b0 && recon_done === 1'b0 &&
+                      dec_send === 1'b0 && dec_mrg2mc_cand_rdy === 3'b000 &&
+                      dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                      dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0 &&
+                      cand_busy === 1'b0,
+                      "Candidate-stage flush edge must cancel before Candidate capture");
+                mc2mrg_cand_ack = lane_mask_f;
+                repeat (2) begin
+                    @(posedge clk_vc);
+                    #1;
+                    check(cand_capture_done === 1'b0 && dec_recon_start === 1'b0 &&
+                          recon_done === 1'b0 && dec_send === 1'b0 &&
+                          dec_mrg2mc_cand_rdy === 3'b000 &&
+                          dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                          dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0,
+                          "stale ack cannot retire a Candidate-stage-cancelled transaction");
+                end
+                @(negedge clk_vc);
+                mc2mrg_cand_ack = 3'b000;
+                reg_slice_go = 1'b0;
+                @(posedge clk_vc);
+                #1;
+                recovery_cycle = cycle_count;
+                check(irpu2ccu_rdy === 1'b1 && dec_busy === 1'b0 &&
+                      accepted_count == before_accept_count + 1 &&
+                      candidate_count == before_candidate_count &&
+                      recon_count == before_recon_count &&
+                      transfer_count == before_transfer &&
+                      commit_count == before_commit && done_count == before_done &&
+                      update_count == before_update,
+                      "Candidate-stage flush must recover idle without capturing or retiring work");
+                $display("T07-C1 CANDIDATE FLUSH TRACE: accepted_cycle=%0d cand_start_cycle=%0d flush_cycle=%0d recovery_cycle=%0d capture_delta=%0d recon_delta=%0d stale_ack_ignored=1",
+                         accepted_cycle, candidate_start_cycle, candidate_flush_cycle,
+                         recovery_cycle, candidate_count - before_candidate_count,
+                         recon_count - before_recon_count);
+                disable transaction_flow;
+            end
+
             @(posedge clk_vc);
             #1;
+            candidate_capture_cycle = cycle_count;
             check(cand_capture_done === 1'b1 &&
                   dec_spatial_mvp === expected_mvp_f,
                   "real Candidate capture must produce the directed spatial MVP");
@@ -464,6 +544,60 @@ module tb_vc_mvp_dec_top;
             #1;
             check(cand_capture_done === 1'b0 && dec_recon_start === 1'b1,
                   "Candidate capture must launch reconstruction exactly once");
+            if (flush_stage_f == 3) begin
+                check(accepted_count == before_accept_count + 1 &&
+                      candidate_count == before_candidate_count + 1 &&
+                      recon_count == before_recon_count &&
+                      dec_spatial_mvp === expected_mvp_f,
+                      "Recon-flush case must capture Candidate once before reconstruction");
+                recon_start_cycle = cycle_count;
+                @(negedge clk_vc);
+                reg_slice_go = 1'b1;
+                recon_flush_cycle = cycle_count;
+                #1;
+                check(recon_done === 1'b0 && dec_send === 1'b0 &&
+                      dec_mrg2mc_cand_rdy === 3'b000 &&
+                      dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                      dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0,
+                      "pre-completion flush must suppress reconstruction and MC activity");
+                @(posedge clk_vc);
+                #1;
+                check(dec_recon_start === 1'b0 && recon_done === 1'b0 &&
+                      dec_send === 1'b0 && dec_mrg2mc_cand_rdy === 3'b000 &&
+                      dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                      dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0,
+                      "Recon-stage flush edge must cancel before reconstruction completion");
+                mc2mrg_cand_ack = lane_mask_f;
+                repeat (2) begin
+                    @(posedge clk_vc);
+                    #1;
+                    check(recon_done === 1'b0 && dec_send === 1'b0 &&
+                          dec_mrg2mc_cand_rdy === 3'b000 &&
+                          dec_mrg2mc_cand_data === '0 && mc_commit === 1'b0 &&
+                          dec_mrg2mc_cand_done === 3'b000 && rolling_update === 1'b0,
+                          "stale ack cannot retire a Recon-stage-cancelled transaction");
+                end
+                @(negedge clk_vc);
+                mc2mrg_cand_ack = 3'b000;
+                reg_slice_go = 1'b0;
+                @(posedge clk_vc);
+                #1;
+                recovery_cycle = cycle_count;
+                check(irpu2ccu_rdy === 1'b1 && dec_busy === 1'b0 &&
+                      accepted_count == before_accept_count + 1 &&
+                      candidate_count == before_candidate_count + 1 &&
+                      recon_count == before_recon_count &&
+                      transfer_count == before_transfer &&
+                      commit_count == before_commit && done_count == before_done &&
+                      update_count == before_update,
+                      "Recon-stage flush must recover idle after one Candidate capture and no completion");
+                $display("T07-C1 RECON FLUSH TRACE: accepted_cycle=%0d capture_cycle=%0d recon_start_cycle=%0d flush_cycle=%0d recovery_cycle=%0d capture_delta=%0d recon_delta=%0d stale_ack_ignored=1",
+                         accepted_cycle, candidate_capture_cycle, recon_start_cycle,
+                         recon_flush_cycle, recovery_cycle,
+                         candidate_count - before_candidate_count,
+                         recon_count - before_recon_count);
+                disable transaction_flow;
+            end
             @(posedge clk_vc);
             #1;
             check(recon_done === 1'b1 && dec_send === 1'b0,
@@ -523,7 +657,7 @@ module tb_vc_mvp_dec_top;
                 ccu2irpu_valid = 1'b0;
             end
 
-            if (flush_f) begin
+            if (flush_stage_f == 1) begin
                 @(negedge clk_vc);
                 reg_slice_go = 1'b1;
                 #1;
@@ -562,6 +696,7 @@ module tb_vc_mvp_dec_top;
                 before_update = update_count;
                 @(negedge clk_vc);
                 mc2mrg_cand_ack = lane_mask_f;
+                #1;
                 check(mc_commit === 1'b1 && rolling_update === 1'b1,
                       "selected MC handshake must be the single rolling-update event");
                 @(posedge clk_vc);
@@ -713,8 +848,20 @@ module tb_vc_mvp_dec_top;
                         2'b10, 3'b000, 16'd0, 16'd0,
                         32'h01020304, 32'h01020304, 2, 1'b1);
 
-        check(accepted_count == 15 && candidate_count == 15 && recon_count == 15,
-              "all fifteen accepted transactions must traverse Candidate and reconstruction");
+        $display("CASE H: flush after real Neighbor completion before Candidate capture");
+        mem_a1 = 32'h13572468;
+        run_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 7'd1, 7'd1,
+                        2'b10, 3'b000, 16'd0, 16'd0,
+                        32'h13572468, 32'h13572468, 0, 2);
+
+        $display("CASE I: flush after real Candidate capture before reconstruction completion");
+        mem_a1 = 32'h24681357;
+        run_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 7'd1, 7'd1,
+                        2'b10, 3'b000, 16'd0, 16'd0,
+                        32'h24681357, 32'h24681357, 0, 3);
+
+        check(accepted_count == 17 && candidate_count == 16 && recon_count == 15,
+              "seventeen accepted transactions must match stage-specific flush coverage");
         check(transfer_count == 14 && commit_count == 14 && done_count == 14 &&
               update_count == 14,
               "only fourteen non-flushed transactions may transfer/commit/done/update");
