@@ -100,6 +100,10 @@ module vc_mvp_dec_neib_top #(
     reg      [3:0]          neib_a_read_pending_q;
     reg      [3:0]          neib_b_read_pending_q;
     wire                    neib_reg_slice_go;
+    wire                    ctrl_irpu2ccu_rdy;
+    wire                    ctrl_ccu2irpu_valid;
+    wire                    neib_mem_quiescent;
+    wire                    dec_accept;
     wire     [1:0][2:0]     cmdq_empty_n;
     wire     [2:0]          amvp_blk_sz;
     wire     [2:0]          n_blk_sz_amvp;
@@ -135,8 +139,8 @@ module vc_mvp_dec_neib_top #(
         .vc_rst_z             (vc_rst_z),
         .codec_mode           (codec_mode),
         .reg_slice_go         (reg_slice_go),
-        .ccu2irpu_valid       (ccu2irpu_valid),
-        .irpu2ccu_rdy         (irpu2ccu_rdy),
+        .ccu2irpu_valid       (ctrl_ccu2irpu_valid),
+        .irpu2ccu_rdy         (ctrl_irpu2ccu_rdy),
         .ccu2irpu_mvd         (ccu2irpu_mvd),
         .ccu2irpu_ref_idx     (ccu2irpu_ref_idx),
         .ccu2irpu_is_skip     (ccu2irpu_is_skip),
@@ -193,6 +197,13 @@ module vc_mvp_dec_neib_top #(
     assign neib_b_req_hs = irpu2neib_b_req[0] && neib_b2irpu_gnt;
     assign neib_a_read_pending = |neib_a_read_pending_q;
     assign neib_b_read_pending = |neib_b_read_pending_q;
+    assign neib_mem_quiescent = (neib_a_read_pending_q == 4'd0) &&
+                                 (neib_b_read_pending_q == 4'd0);
+    // Physical A/B reads survive Decoder flush until their rd_lat responses
+    // drain.  Admission is reopened only after the memory path is quiescent.
+    assign ctrl_ccu2irpu_valid = ccu2irpu_valid && neib_mem_quiescent;
+    assign irpu2ccu_rdy = ctrl_irpu2ccu_rdy && neib_mem_quiescent;
+    assign dec_accept = ccu2irpu_valid && irpu2ccu_rdy;
 
     // Raw completion is level-sensitive idle status.  Pending is set only
     // after launch, and public read tracking drains queued A/B responses so a
@@ -212,7 +223,7 @@ module vc_mvp_dec_neib_top #(
             dec_ctux_q <= {VC_CTU_X_NB{1'b0}};
         else if (reg_slice_go || !codec_mode)
             dec_ctux_q <= {VC_CTU_X_NB{1'b0}};
-        else if (ccu2irpu_valid && irpu2ccu_rdy)
+        else if (dec_accept)
             dec_ctux_q <= dec_txn_ctux;
     end
 
@@ -227,22 +238,18 @@ module vc_mvp_dec_neib_top #(
             neib_pending_q <= 1'b0;
     end
 
-    // Count accepted public reads independently per direction; completion is
-    // eligible only after every corresponding rd_lat has returned.
+    // These are physical accepted-but-not-yet-returned Neighbor reads, not
+    // current-Decoder reads.  They must survive Decoder flush until rd_lat.
+    // The drain barrier makes req_hs and stale rd_lat overlap impossible.
     always @(posedge clk_vc or negedge vc_rst_z) begin
         if (~vc_rst_z) begin
-            neib_a_read_pending_q <= 4'd0;
-            neib_b_read_pending_q <= 4'd0;
-        end
-        else if (reg_slice_go || !codec_mode) begin
             neib_a_read_pending_q <= 4'd0;
             neib_b_read_pending_q <= 4'd0;
         end
         else begin
             case ({neib_a_req_hs, neib_a2irpu_rd_lat})
                 2'b10: neib_a_read_pending_q <= neib_a_read_pending_q + 1'b1;
-                // A late response from work discarded by Decoder flush is
-                // not part of the current transaction and must not underflow.
+                // Keep the T01-B2.2 zero guard for an unmatched response.
                 2'b01: if (neib_a_read_pending_q != 4'd0)
                            neib_a_read_pending_q <= neib_a_read_pending_q - 1'b1;
                        else
@@ -251,8 +258,7 @@ module vc_mvp_dec_neib_top #(
             endcase
             case ({neib_b_req_hs, neib_b2irpu_rd_lat})
                 2'b10: neib_b_read_pending_q <= neib_b_read_pending_q + 1'b1;
-                // See the A-direction guard above; keep stale B responses at
-                // zero rather than corrupting Decoder transaction accounting.
+                // See the A-direction guard above.
                 2'b01: if (neib_b_read_pending_q != 4'd0)
                            neib_b_read_pending_q <= neib_b_read_pending_q - 1'b1;
                        else

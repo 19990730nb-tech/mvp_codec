@@ -148,6 +148,21 @@ module tb_vc_mvp_dec_neib_top;
     reg     audit_c_b_event_d;
     reg     audit_c_snapshot_d;
     reg     audit_old_response_seen;
+    integer barrier_flush_cycle;
+    integer barrier_a_at_flush;
+    integer barrier_b_at_flush;
+    integer barrier_a_zero_cycle;
+    integer barrier_b_zero_cycle;
+    integer barrier_ready_reopen_cycle;
+    integer barrier_fresh_accept_cycle;
+    integer barrier_fresh_neib_start_cycle;
+    integer barrier_first_fresh_req_cycle;
+    integer barrier_stale_a_last_cycle;
+    integer barrier_stale_b_last_cycle;
+    integer barrier_hold_accept_count;
+    integer barrier_drain_cycles;
+    reg     barrier_test_active;
+    reg     barrier_drain_violation;
     reg     [4:0] first_b_addr;
     reg     monitor_active;
     reg     monitor_raw_seen_low;
@@ -276,17 +291,19 @@ module tb_vc_mvp_dec_neib_top;
             // response from work discarded by a flush.  Record it separately;
             // the wrapper must leave the count at zero rather than wrap.
             stale_a_event_d = neib_a2irpu_rd_lat &&
-                              (dut.neib_a_read_pending_q == 4'd0);
+                              ((dut.neib_a_read_pending_q == 4'd0) ||
+                               (neib_a2irpu_rd[33:0] == OLD_STALE_A));
             stale_b_event_d = neib_b2irpu_rd_lat &&
-                              (dut.neib_b_read_pending_q == 4'd0);
+                              ((dut.neib_b_read_pending_q == 4'd0) ||
+                               (neib_b2irpu_rd[33:0] == OLD_STALE_B));
             if (stale_a_event_d) begin
                 stale_a_rd_lat_count = stale_a_rd_lat_count + 1;
-                $display("Neighbor monitor: stale A rd_lat cycle=%0d pending remains zero",
+                $display("Neighbor monitor: late/stale A rd_lat cycle=%0d",
                          cycle_count);
             end
             if (stale_b_event_d) begin
                 stale_b_rd_lat_count = stale_b_rd_lat_count + 1;
-                $display("Neighbor monitor: stale B rd_lat cycle=%0d pending remains zero",
+                $display("Neighbor monitor: late/stale B rd_lat cycle=%0d",
                          cycle_count);
             end
 
@@ -297,6 +314,43 @@ module tb_vc_mvp_dec_neib_top;
             if (irpu2ref_req) begin
                 $display("FAIL: unexpected RefList request at cycle %0d", cycle_count);
                 errors = errors + 1;
+            end
+
+            if (barrier_test_active) begin
+                if (neib_a2irpu_rd_lat &&
+                    (neib_a2irpu_rd[33:0] == OLD_STALE_A)) begin
+                    barrier_stale_a_last_cycle = cycle_count;
+                    $display("BARRIER: stale A rd_lat cycle=%0d pending_before=%0d",
+                             cycle_count, dut.neib_a_read_pending_q);
+                end
+                if (neib_b2irpu_rd_lat &&
+                    (neib_b2irpu_rd[33:0] == OLD_STALE_B)) begin
+                    barrier_stale_b_last_cycle = cycle_count;
+                    $display("BARRIER: stale B rd_lat cycle=%0d pending_before=%0d",
+                             cycle_count, dut.neib_b_read_pending_q);
+                end
+                if ((barrier_fresh_accept_cycle < 0) &&
+                    !dut.neib_mem_quiescent &&
+                    irpu2neib_a_req[0] && neib_a2irpu_gnt) begin
+                    $display("FAIL: fresh A request during Neighbor drain at cycle %0d",
+                             cycle_count);
+                    barrier_drain_violation = 1'b1;
+                    errors = errors + 1;
+                end
+                if ((barrier_fresh_accept_cycle < 0) &&
+                    !dut.neib_mem_quiescent &&
+                    irpu2neib_b_req[0] && neib_b2irpu_gnt) begin
+                    $display("FAIL: fresh B request during Neighbor drain at cycle %0d",
+                             cycle_count);
+                    barrier_drain_violation = 1'b1;
+                    errors = errors + 1;
+                end
+                if (ccu2irpu_valid && irpu2ccu_rdy) begin
+                    barrier_fresh_accept_cycle = cycle_count;
+                    barrier_hold_accept_count = barrier_hold_accept_count + 1;
+                    $display("BARRIER: fresh external accept cycle=%0d",
+                             cycle_count);
+                end
             end
 
             neib_a2irpu_rd_lat <= 1'b0;
@@ -457,8 +511,84 @@ module tb_vc_mvp_dec_neib_top;
             audit_c_b_event_d         = 1'b0;
             audit_c_snapshot_d        = 1'b0;
             audit_old_response_seen   = 1'b0;
+            barrier_flush_cycle       = -1;
+            barrier_a_at_flush        = -1;
+            barrier_b_at_flush        = -1;
+            barrier_a_zero_cycle      = -1;
+            barrier_b_zero_cycle      = -1;
+            barrier_ready_reopen_cycle= -1;
+            barrier_fresh_accept_cycle= -1;
+            barrier_fresh_neib_start_cycle = -1;
+            barrier_first_fresh_req_cycle = -1;
+            barrier_stale_a_last_cycle = -1;
+            barrier_stale_b_last_cycle = -1;
+            barrier_hold_accept_count = 0;
+            barrier_drain_cycles      = 0;
+            barrier_test_active       = 1'b0;
+            barrier_drain_violation   = 1'b0;
         end
         else begin
+            if (barrier_test_active) begin
+                if ((barrier_fresh_accept_cycle < 0) &&
+                    !dut.neib_mem_quiescent) begin
+                    if (irpu2ccu_rdy) begin
+                        $display("FAIL: irpu2ccu_rdy rose during Neighbor drain at cycle %0d",
+                                 cycle_count);
+                        barrier_drain_violation = 1'b1;
+                        errors = errors + 1;
+                    end
+                    if (dec_neib_start) begin
+                        $display("FAIL: dec_neib_start asserted during drain at cycle %0d",
+                                 cycle_count);
+                        barrier_drain_violation = 1'b1;
+                        errors = errors + 1;
+                    end
+                    if ((barrier_hold_accept_count == 0) &&
+                        !ccu2irpu_valid) begin
+                        $display("FAIL: held ccu2irpu_valid dropped during drain at cycle %0d",
+                                 cycle_count);
+                        barrier_drain_violation = 1'b1;
+                        errors = errors + 1;
+                    end
+                    if (neib_done_amvp || dec_cand_start) begin
+                        $display("FAIL: stale drain produced Neighbor completion activity at cycle %0d",
+                                 cycle_count);
+                        barrier_drain_violation = 1'b1;
+                        errors = errors + 1;
+                    end
+                    barrier_drain_cycles = barrier_drain_cycles + 1;
+                    if (dut.dec_ctux_q == 7'd5) begin
+                        $display("FAIL: fresh CTU-X context latched during drain at cycle %0d",
+                                 cycle_count);
+                        barrier_drain_violation = 1'b1;
+                        errors = errors + 1;
+                    end
+                end
+                if (barrier_a_zero_cycle < 0 &&
+                    (dut.neib_a_read_pending_q == 4'd0)) begin
+                    barrier_a_zero_cycle = cycle_count;
+                    $display("BARRIER: A outstanding reached zero cycle=%0d",
+                             cycle_count);
+                end
+                if (barrier_b_zero_cycle < 0 &&
+                    (dut.neib_b_read_pending_q == 4'd0)) begin
+                    barrier_b_zero_cycle = cycle_count;
+                    $display("BARRIER: B outstanding reached zero cycle=%0d",
+                             cycle_count);
+                end
+                if (barrier_ready_reopen_cycle < 0 &&
+                    dut.neib_mem_quiescent && irpu2ccu_rdy) begin
+                    barrier_ready_reopen_cycle = cycle_count;
+                    $display("BARRIER: ready reopened cycle=%0d",
+                             cycle_count);
+                end
+                if (dec_neib_start && (barrier_fresh_accept_cycle >= 0) &&
+                    (barrier_fresh_neib_start_cycle < 0)) begin
+                    barrier_fresh_neib_start_cycle = cycle_count;
+                    $display("BARRIER: fresh dec_neib_start cycle=%0d",
+                             cycle_count);
+                end
+            end
             if (audit_event_d) begin
                 audit_pending_after = dut.neib_a_read_pending_q;
                 if (audit_phase == 2)
@@ -496,16 +626,6 @@ module tb_vc_mvp_dec_neib_top;
                          audit_c_a_before, audit_c_b_before);
                 audit_c_snapshot_d = 1'b0;
             end
-            if (stale_a_event_d && (dut.neib_a_read_pending_q != 4'd0))
-                begin
-                    $display("FAIL: A pending counter changed on stale rd_lat (t=%0t)", $time);
-                    errors = errors + 1;
-                end
-            if (stale_b_event_d && (dut.neib_b_read_pending_q != 4'd0))
-                begin
-                    $display("FAIL: B pending counter changed on stale rd_lat (t=%0t)", $time);
-                    errors = errors + 1;
-                end
             if (dec_neib_start) begin
                 launch_cycle              = cycle_count;
                 first_a_req_cycle         = -1;
@@ -780,6 +900,54 @@ module tb_vc_mvp_dec_neib_top;
         else begin
             reg_slice_go = 1'b0;
         end
+        begin : drain_loop
+            for (k = 0; k < 80; k = k + 1) begin
+                @(negedge clk_vc);
+                if (dut.neib_mem_quiescent)
+                    disable drain_loop;
+            end
+        end
+        check(dut.neib_mem_quiescent,
+              "flush must wait for all physical Neighbor responses to drain");
+    endtask
+
+    // Assert/release a flush but return before the physical response slots
+    // drain.  The barrier test uses this window to hold a new valid beat.
+    task flush_pending_no_wait;
+        input use_codec_mode;
+        begin : pending_setup
+            for (k = 0; k < 30; k = k + 1) begin
+                @(negedge clk_vc);
+                if (neib_pending && !raw_neib_done_amvp)
+                    disable pending_setup;
+            end
+        end
+        check(neib_pending, "barrier setup must reach an in-flight Neighbor transaction");
+        @(negedge clk_vc);
+        if (use_codec_mode)
+            codec_mode = 1'b0;
+        else
+            reg_slice_go = 1'b1;
+        @(posedge clk_vc);
+        #1;
+        barrier_flush_cycle = cycle_count;
+        barrier_a_at_flush = dut.neib_a_read_pending_q;
+        barrier_b_at_flush = dut.neib_b_read_pending_q;
+        check(!neib_pending && !neib_done_amvp,
+              "barrier flush must clear Decoder Neighbor pending");
+        check(!dec_busy && !dec_cand_start,
+              "barrier flush must clear Decoder controller activity");
+        if ((barrier_a_at_flush != 0) || (barrier_b_at_flush != 0))
+            check(!irpu2ccu_rdy,
+                  "external Decoder ready must be low while stale reads drain");
+        $display("BARRIER: flush cycle=%0d A_outstanding=%0d B_outstanding=%0d ready=%0d",
+                 barrier_flush_cycle, barrier_a_at_flush, barrier_b_at_flush,
+                 irpu2ccu_rdy);
+        @(negedge clk_vc);
+        if (use_codec_mode)
+            codec_mode = 1'b1;
+        else
+            reg_slice_go = 1'b0;
     endtask
 
     initial begin
@@ -889,8 +1057,6 @@ module tb_vc_mvp_dec_neib_top;
         check(first_b_req_cycle >= 0, "non-zero CTU case must issue a B request");
         check(first_b_addr == expected_first_b_addr(3'd1, 3'd2, 3'd2),
               "CTU X=1 B address must match vc_mvp_rd_mem formula");
-        check(stale_a_rd_lat_count > 0 && stale_b_rd_lat_count > 0,
-              "flush regression must observe stale A/B rd_lat responses");
         check(monitor_a_req_count == 2 && monitor_b_req_count == 3,
               "fresh P16 transaction must count only its own A/B requests");
         check(qualified_cycle >= last_a_rd_lat_cycle &&
@@ -939,114 +1105,139 @@ module tb_vc_mvp_dec_neib_top;
               "fresh P8 S1 must not consume stale B data");
         retire_controller;
 
-        $display("CASE L-A: stale A rd_lat overlaps fresh A request");
-        audit_phase = 0;
-        audit_old_a_rd_cycle = -1;
-        audit_fresh_a_req_cycle = -1;
-        audit_pending_before = -1;
-        audit_pending_after = -1;
-        audit_old_response_seen = 1'b0;
-        response_delay_cycles = 4;
-        response_word_a = OLD_STALE_A;
-        response_word_b = OLD_STALE_B;
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b000, 7'd0);
-        flush_pending(1'b0);
-        audit_phase = 1;
-        response_delay_cycles = 0;
-        response_word_a = A_WORD;
-        response_word_b = B_WORD;
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b000, 7'd0);
-        wait_for_neighbor;
-        check(audit_old_response_seen &&
-              (audit_old_a_rd_cycle == audit_fresh_a_req_cycle),
-              "AUDIT A must observe stale A rd_lat with fresh A req_hs");
-        check(audit_pending_after == (audit_pending_before + 1),
-              "AUDIT A stale response must not cancel the fresh A request");
-        check(amvp_neib_a[0] == A_WORD,
-              "AUDIT A fresh A response must determine the final A data");
-        $display("AUDIT A TRACE: launch=%0d stale_rd_lat=%0d fresh_req_hs=%0d req_hs_at_stale=%0d pending_before=%0d pending_after=%0d expected_after=%0d",
-                 launch_cycle, audit_old_a_rd_cycle, audit_fresh_a_req_cycle,
-                 audit_req_hs_at_event, audit_pending_before,
-                 audit_pending_after, audit_pending_before + 1);
-        retire_controller;
-        audit_phase = 0;
-
-        $display("CASE L-B: stale B rd_lat overlaps fresh pending read");
-        audit_phase = 0;
-        audit_old_b_rd_cycle = -1;
-        audit_fresh_b_req_cycle = -1;
-        audit_pending_before = -1;
-        audit_pending_after = -1;
-        audit_old_response_seen = 1'b0;
+        $display("CASE L: post-flush Neighbor drain barrier");
+        barrier_test_active = 1'b0;
+        barrier_flush_cycle = -1;
+        barrier_a_at_flush = -1;
+        barrier_b_at_flush = -1;
+        barrier_a_zero_cycle = -1;
+        barrier_b_zero_cycle = -1;
+        barrier_ready_reopen_cycle = -1;
+        barrier_fresh_accept_cycle = -1;
+        barrier_fresh_neib_start_cycle = -1;
+        barrier_first_fresh_req_cycle = -1;
+        barrier_stale_a_last_cycle = -1;
+        barrier_stale_b_last_cycle = -1;
+        barrier_hold_accept_count = 0;
+        barrier_drain_cycles = 0;
+        barrier_drain_violation = 1'b0;
         response_delay_cycles = 5;
         response_word_a = OLD_STALE_A;
         response_word_b = OLD_STALE_B;
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b00, 3'b001, 7'd0);
-        flush_pending(1'b0);
-        audit_phase = 2;
-        response_delay_cycles = 3;
-        response_word_a = A_WORD;
-        response_word_b = B_WORD;
-        start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b00, 3'b001, 7'd0);
-        wait_for_neighbor;
-        check(audit_old_response_seen && (audit_fresh_b_req_cycle >= 0) &&
-              (audit_old_b_rd_cycle >= audit_fresh_b_req_cycle),
-              "AUDIT B must observe old B rd_lat after fresh B req_hs");
-        check(audit_pending_before > 0 &&
-              audit_pending_after == (audit_pending_before +
-                                      audit_req_hs_at_event),
-              "AUDIT B stale response must not decrement fresh B pending depth");
-        if (amvp_neib_b[0] != B_WORD)
-            $display("AUDIT B mismatch: amvp_neib_b[0]=%h expected=%h",
-                     amvp_neib_b[0], B_WORD);
-        check(amvp_neib_b[0] == B_WORD,
-              "AUDIT B fresh B response must determine the final B data");
-        $display("AUDIT B TRACE: launch=%0d fresh_req_hs=%0d stale_rd_lat=%0d req_hs_at_stale=%0d pending_before=%0d pending_after=%0d",
-                 launch_cycle, audit_fresh_b_req_cycle, audit_old_b_rd_cycle,
-                 audit_req_hs_at_event, audit_pending_before,
-                 audit_pending_after);
-        retire_controller;
-        audit_phase = 0;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b11, 3'b111, 7'd0);
+        barrier_test_active = 1'b0;
+        flush_pending_no_wait(1'b0);
 
-        $display("CASE L-C: delayed stale A/B responses overlap fresh P8 internal/no-read");
-        send_neighbor_update_at(FRESH_LOCAL_A, 3'd0, 3'd3);
-        send_neighbor_update_at(FRESH_LOCAL_B, 3'd3, 3'd2);
-        audit_phase = 0;
-        audit_old_a_rd_cycle = -1;
-        audit_old_b_rd_cycle = -1;
-        audit_fresh_launch_cycle = -1;
-        audit_c_a_pending_before = -1;
-        audit_c_a_pending_after = -1;
-        audit_c_b_pending_before = -1;
-        audit_c_b_pending_after = -1;
-        audit_old_response_seen = 1'b0;
-        response_delay_cycles = 4;
-        response_word_a = OLD_STALE_A;
-        response_word_b = OLD_STALE_B;
-        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b001, 7'd0);
-        flush_pending(1'b0);
-        audit_phase = 3;
+        // Hold one fresh external-read transaction valid throughout drain.
         response_delay_cycles = 0;
         response_word_a = A_WORD;
         response_word_b = B_WORD;
+        @(negedge clk_vc);
+        ccu2irpu_valid      = 1'b1;
+        ccu2irpu_mvd       = 32'd0;
+        ccu2irpu_ref_idx   = 4'd0;
+        ccu2irpu_is_skip   = 1'b0;
+        ccu2irpu_part_mode = 1'b0;
+        ccu2irpu_sub_idx   = 2'd0;
+        dec_txn_cux        = 3'd2;
+        dec_txn_cuy        = 3'd2;
+        dec_txn_a_avail    = 2'b11;
+        dec_txn_b_avail    = 3'b111;
+        dec_txn_ctux       = 7'd5;
+        barrier_test_active = 1'b1;
+        begin : barrier_hold_loop
+            for (k = 0; k < 80; k = k + 1) begin
+                @(negedge clk_vc);
+                if (dut.neib_mem_quiescent)
+                    disable barrier_hold_loop;
+            end
+        end
+        check(dut.neib_mem_quiescent,
+              "held-valid barrier must eventually reach memory quiescence");
+        check(!barrier_drain_violation,
+              "held-valid barrier must block all fresh activity during drain");
+        check(barrier_a_zero_cycle >= 0 && barrier_b_zero_cycle >= 0,
+              "both physical Neighbor outstanding counts must reach zero");
+        check(barrier_ready_reopen_cycle >= 0,
+              "Decoder ready must reopen after final stale response");
+        check(irpu2ccu_rdy,
+              "ready must reopen once held valid reaches a quiescent boundary");
+        @(posedge clk_vc);
+        #1;
+        check(dec_neib_start, "held valid must be accepted after drain");
+        ccu2irpu_valid = 1'b0;
+        @(negedge clk_vc);
+        check(barrier_hold_accept_count == 1,
+              "held valid transaction must be accepted exactly once");
+        wait_for_neighbor;
+        check(first_a_req_cycle > barrier_a_zero_cycle &&
+              first_b_req_cycle > barrier_b_zero_cycle,
+              "fresh A/B requests must begin only after stale drain");
+        check(monitor_a_req_count == 2 && monitor_b_req_count == 3,
+              "fresh held-valid P16 must issue the expected A/B requests");
+        check(amvp_neib_a[0] == A_WORD && amvp_neib_b[0] == B_WORD,
+              "fresh post-drain external Neighbor data must be correct");
+        $display("BARRIER TRACE: flush=%0d A_at_flush=%0d B_at_flush=%0d stale_A_last=%0d stale_B_last=%0d A_zero=%0d B_zero=%0d ready_reopen=%0d fresh_accept=%0d fresh_neib_start=%0d fresh_A_req=%0d fresh_B_req=%0d held_valid_drain_cycles=%0d",
+                 barrier_flush_cycle, barrier_a_at_flush, barrier_b_at_flush,
+                 barrier_stale_a_last_cycle, barrier_stale_b_last_cycle,
+                 barrier_a_zero_cycle, barrier_b_zero_cycle,
+                 barrier_ready_reopen_cycle, barrier_fresh_accept_cycle,
+                 barrier_fresh_neib_start_cycle, first_a_req_cycle,
+                 first_b_req_cycle, barrier_drain_cycles);
+        retire_controller;
+        barrier_test_active = 1'b0;
+
+        $display("CASE M: fresh P8/internal no-read immediately after a completed drain");
+        send_neighbor_update_at(FRESH_LOCAL_A, 3'd0, 3'd3);
+        send_neighbor_update_at(FRESH_LOCAL_B, 3'd3, 3'd2);
+        response_delay_cycles = 5;
+        response_word_a = OLD_STALE_A;
+        response_word_b = OLD_STALE_B;
+        barrier_test_active = 1'b0;
+        barrier_flush_cycle = -1;
+        barrier_a_at_flush = -1;
+        barrier_b_at_flush = -1;
+        barrier_a_zero_cycle = -1;
+        barrier_b_zero_cycle = -1;
+        barrier_ready_reopen_cycle = -1;
+        barrier_fresh_accept_cycle = -1;
+        barrier_fresh_neib_start_cycle = -1;
+        barrier_stale_a_last_cycle = -1;
+        barrier_stale_b_last_cycle = -1;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b001, 7'd0);
+        flush_pending_no_wait(1'b0);
+        barrier_test_active = 1'b1;
+        begin : drain_no_read_loop
+            for (k = 0; k < 80; k = k + 1) begin
+                @(negedge clk_vc);
+                if (dut.neib_mem_quiescent)
+                    disable drain_no_read_loop;
+            end
+        end
+        check(dut.neib_mem_quiescent,
+              "no-read case must launch only after stale responses drain");
+        check(!irpu2ccu_rdy || dut.neib_mem_quiescent,
+              "ready gating must remain coherent through no-read drain");
+        response_delay_cycles = 0;
+        response_word_a = A_WORD;
+        response_word_b = B_WORD;
+        a_count_before = a_req_count;
+        b_count_before = b_req_count;
         start_transaction(1'b0, 1'b1, 2'd0, 3'd3, 3'd3, 2'b00, 3'b000, 7'd0);
         wait_for_neighbor;
-        retire_controller_after_stale;
-        check(audit_fresh_launch_cycle >= 0 && audit_old_response_seen &&
-              audit_old_a_rd_cycle >= audit_fresh_launch_cycle,
-              "AUDIT C stale response must occur after fresh internal launch");
-        audit_c_qualified_cycle = qualified_cycle;
-        check(audit_c_a_pending_before == 0 &&
-              audit_c_a_pending_after == 0,
-              "AUDIT C stale A response must not create Decoder pending work");
-        $display("AUDIT C TRACE: fresh_launch=%0d stale_A=%0d stale_B=%0d A_pending=%0d->%0d B_pending=%0d->%0d local_before={A1:%h B1:%h} local_after={A1:%h B1:%h} qualified_done=%0d",
-                 audit_fresh_launch_cycle, audit_old_a_rd_cycle,
-                 audit_old_b_rd_cycle, audit_c_a_pending_before,
-                 audit_c_a_pending_after, audit_c_b_pending_before,
-                 audit_c_b_pending_after, audit_c_a_before,
-                 audit_c_b_before, amvp_neib_a[1], amvp_neib_b[1],
-                 audit_c_qualified_cycle);
-        audit_phase = 0;
+        check(a_req_count == a_count_before && b_req_count == b_count_before,
+              "post-drain P8/internal must issue zero A/B requests");
+        check(amvp_neib_a[1] == FRESH_LOCAL_A &&
+              amvp_neib_b[1] == FRESH_LOCAL_B,
+              "post-drain P8/internal local Neighbor view must be correct");
+        check(qualified_cycle >= launch_cycle,
+              "post-drain no-read qualified completion must occur normally");
+        $display("NO-READ TRACE: fresh_launch=%0d A_req_count=0 B_req_count=0 raw_high_at_launch=%0d raw_seen_low=%0d qualified_done=%0d local={A1:%h B1:%h}",
+                 launch_cycle, monitor_raw_high_at_launch,
+                 monitor_raw_seen_low, qualified_cycle,
+                 amvp_neib_a[1], amvp_neib_b[1]);
+        retire_controller;
+        barrier_test_active = 1'b0;
 
         check(col_req_count == 0, "no Col requests are legal in Decoder mode");
         check(ref_req_count == 0, "no RefList requests are legal in Decoder mode");
@@ -1056,9 +1247,9 @@ module tb_vc_mvp_dec_neib_top;
                  stale_a_rd_lat_count, stale_b_rd_lat_count);
 
         if (errors == 0)
-            $display("T01-B2.3-A RESULT: PASS");
+            $display("T01-B2.3 RESULT: PASS");
         else begin
-            $display("T01-B2.3-A RESULT: FAIL (%0d self-check failures)", errors);
+            $display("T01-B2.3 RESULT: FAIL (%0d self-check failures)", errors);
         end
         $finish;
     end
