@@ -38,7 +38,7 @@ module tb_vc_mvp_dec_cand;
         input condition;
         input [8*160-1:0] message;
         begin
-            if (!condition) begin
+            if (condition !== 1'b1) begin
                 $display("FAIL: %0s (time=%0t)", message, $time);
                 errors = errors + 1;
             end
@@ -153,7 +153,7 @@ module tb_vc_mvp_dec_cand;
 
     initial begin
         clk_vc = 1'b0;
-        vc_rst_z = 1'b0;
+        vc_rst_z = 1'b1;
         reg_slice_go = 1'b0;
         dec_cand_start = 1'b0;
         selected_cu_cmd = 17'd0;
@@ -164,7 +164,9 @@ module tb_vc_mvp_dec_cand;
         launch_mv = 32'd0;
         held_mv = 32'd0;
 
-        #2;
+        #1;
+        vc_rst_z = 1'b0;
+        #1;
         check(dec_spatial_mvp == 0 && !cand_capture_done && !cand_busy,
               "asynchronous reset must clear wrapper and generator state");
         @(negedge clk_vc);
@@ -212,12 +214,14 @@ module tb_vc_mvp_dec_cand;
         run_case("B+C negative MED with zero A",
                  make_cmd(3'b001, 0, 0, 0, 1, 1, 0), 32'hffecffd8);
 
-        $display("CASE 10: X and Y medians come from different operands");
+        $display("CASE 10: X and Y medians differ; B0 wins over available B2");
         load_neighbors(32'h0, {16'd300,16'd50},
                        {16'h8000,16'h8000},
                        {16'hff9c,16'd200}, {16'd100,16'hffec});
         run_case("ABC cross-component median", make_cmd(3'b010, 0, 1, 1, 1, 1, 0),
-                 32'h00640032);
+                 32'hff9c0032);
+        check(dec_spatial_mvp !== 32'h00640032,
+              "B0-over-B2 priority must reject the B2-derived median");
 
         $display("CASE 11: signed negative component median");
         load_neighbors(32'h0, {16'hffe2,16'hfff7},
