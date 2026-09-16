@@ -27,6 +27,12 @@ module vc_mvp_dec_neib_top #(
     input      [2:0]        dec_txn_cuy,
     input      [1:0]        dec_txn_a_avail,
     input      [2:0]        dec_txn_b_avail,
+    // CTU X is part of the active AVC B-neighbor SRAM address.  The decoder
+    // wrapper latches it with the accepted transaction.
+    input      [VC_CTU_X_NB-1:0] dec_txn_ctux,
+    // The legacy B address generator uses this configuration in addition to
+    // ctux/cux/cuy; the remaining picture geometry is Col-path-only here.
+    input      [VC_CTU_X_NB-1:0] reg_pic_width_ctu_m1,
 
     input                   cand_capture_done,
     input                   recon_done,
@@ -90,6 +96,7 @@ module vc_mvp_dec_neib_top #(
     wire                    qualified_neib_done;
     wire                    raw_neib_done_amvp_w;
     reg                     neib_pending_q;
+    reg      [VC_CTU_X_NB-1:0] dec_ctux_q;
     reg      [3:0]          neib_a_read_pending_q;
     reg      [3:0]          neib_b_read_pending_q;
     wire                    neib_reg_slice_go;
@@ -113,9 +120,11 @@ module vc_mvp_dec_neib_top #(
     assign mrg_cu_start = 1'b0;
     assign n_blk_sz_mrg = 3'b000;
 
-    wire     [VC_CTU_X_NB-1:0] pic_width_ctu_m1 = {VC_CTU_X_NB{1'b1}};
-    wire     [VC_CU_X_NB-1:0]  pic_width_cu_m1  = {VC_CU_X_NB{1'b1}};
-    wire     [VC_CU_Y_NB-1:0]  pic_height_cu_m1 = {VC_CU_Y_NB{1'b1}};
+    wire     [VC_CTU_X_NB-1:0] pic_width_ctu_m1 = reg_pic_width_ctu_m1;
+    // These inputs only affect disabled Col/temporal logic.  Keep the legacy
+    // ports structurally connected without exposing unused Decoder ports.
+    wire     [VC_CU_X_NB-1:0]  pic_width_cu_m1  = {VC_CU_X_NB{1'b0}};
+    wire     [VC_CU_Y_NB-1:0]  pic_height_cu_m1 = {VC_CU_Y_NB{1'b0}};
 
     // Decoder mode resets the legacy read FSMs without allowing a RefList
     // start; cur_ctu_start below remains permanently low for this path.
@@ -194,6 +203,18 @@ module vc_mvp_dec_neib_top #(
                                  codec_mode && !reg_slice_go;
     assign neib_done_amvp = qualified_neib_done;
     assign neib_pending = neib_pending_q;
+
+    // CTU context is transaction state, just like cux/cuy and availability.
+    // It must not be coupled to cur_ctu_start: that signal only gates the
+    // legacy RefList launch.
+    always @(posedge clk_vc or negedge vc_rst_z) begin
+        if (~vc_rst_z)
+            dec_ctux_q <= {VC_CTU_X_NB{1'b0}};
+        else if (reg_slice_go || !codec_mode)
+            dec_ctux_q <= {VC_CTU_X_NB{1'b0}};
+        else if (ccu2irpu_valid && irpu2ccu_rdy)
+            dec_ctux_q <= dec_txn_ctux;
+    end
 
     always @(posedge clk_vc or negedge vc_rst_z) begin
         if (~vc_rst_z)
@@ -281,7 +302,7 @@ module vc_mvp_dec_neib_top #(
         .reg_tmp_mvp_flag     (1'b0),
         .reg_num_ref_l0_act_m1(4'd0),
         .cur_ctu_start        (1'b0),
-        .ctux                 ({VC_CTU_X_NB{1'b0}}),
+        .ctux                 (dec_ctux_q),
         .ctuy                 ({VC_CTU_Y_NB{1'b0}}),
         .pic_x                (12'd0),
         .pic_y                (12'd0),

@@ -23,6 +23,8 @@ module tb_vc_mvp_dec_neib_top;
     reg      [2:0]        dec_txn_cuy;
     reg      [1:0]        dec_txn_a_avail;
     reg      [2:0]        dec_txn_b_avail;
+    reg      [6:0]        dec_txn_ctux;
+    reg      [6:0]        reg_pic_width_ctu_m1;
 
     reg                   cand_capture_done;
     reg                   recon_done;
@@ -91,10 +93,16 @@ module tb_vc_mvp_dec_neib_top;
     integer a_count_before;
     integer b_count_before;
     integer k;
-    reg     raw_seen_low;
-    reg     raw_high_at_launch;
     reg     a_req_d;
     reg     b_req_d;
+    integer first_a_req_cycle;
+    integer first_b_req_cycle;
+    integer first_a_rd_lat_cycle;
+    integer first_b_rd_lat_cycle;
+    reg     [4:0] first_b_addr;
+    reg     monitor_active;
+    reg     monitor_raw_seen_low;
+    reg     monitor_raw_high_at_launch;
 
     vc_mvp_dec_neib_top dut (
         .clk_vc               (clk_vc),
@@ -112,6 +120,8 @@ module tb_vc_mvp_dec_neib_top;
         .dec_txn_cuy          (dec_txn_cuy),
         .dec_txn_a_avail      (dec_txn_a_avail),
         .dec_txn_b_avail      (dec_txn_b_avail),
+        .dec_txn_ctux         (dec_txn_ctux),
+        .reg_pic_width_ctu_m1 (reg_pic_width_ctu_m1),
         .cand_capture_done    (cand_capture_done),
         .recon_done           (recon_done),
         .mc_commit            (mc_commit),
@@ -191,8 +201,8 @@ module tb_vc_mvp_dec_neib_top;
         end
         else begin
             cycle_count = cycle_count + 1;
-            if (irpu2neib_a_req[0]) a_req_count = a_req_count + 1;
-            if (irpu2neib_b_req[0]) b_req_count = b_req_count + 1;
+            if (irpu2neib_a_req[0] && neib_a2irpu_gnt) a_req_count = a_req_count + 1;
+            if (irpu2neib_b_req[0] && neib_b2irpu_gnt) b_req_count = b_req_count + 1;
             if (irpu2col_req)       col_req_count = col_req_count + 1;
             if (irpu2ref_req)       ref_req_count = ref_req_count + 1;
 
@@ -214,6 +224,82 @@ module tb_vc_mvp_dec_neib_top;
         end
     end
 
+    // Persistent transaction monitor.  This runs independently of the task
+    // boundaries, which is required because start_transaction() consumes the
+    // negedge immediately following the launch pulse.
+    always @(negedge clk_vc or negedge vc_rst_z) begin
+        if (~vc_rst_z) begin
+            launch_cycle              = -1;
+            first_a_req_cycle         = -1;
+            first_b_req_cycle         = -1;
+            first_a_rd_lat_cycle      = -1;
+            first_b_rd_lat_cycle      = -1;
+            raw_done_cycle             = -1;
+            qualified_cycle            = -1;
+            first_b_addr               = 5'd0;
+            monitor_active             = 1'b0;
+            monitor_raw_seen_low       = 1'b0;
+            monitor_raw_high_at_launch = 1'b0;
+        end
+        else begin
+            if (dec_neib_start) begin
+                launch_cycle              = cycle_count;
+                first_a_req_cycle         = -1;
+                first_b_req_cycle         = -1;
+                first_a_rd_lat_cycle      = -1;
+                first_b_rd_lat_cycle      = -1;
+                raw_done_cycle             = -1;
+                qualified_cycle            = -1;
+                first_b_addr               = 5'd0;
+                monitor_active             = 1'b1;
+                monitor_raw_seen_low       = 1'b0;
+                monitor_raw_high_at_launch = raw_neib_done_amvp;
+                if (raw_neib_done_amvp)
+                    raw_done_cycle = cycle_count;
+            end
+
+            if (monitor_active || dec_neib_start) begin
+                if ((first_a_req_cycle < 0) && irpu2neib_a_req[0] &&
+                    neib_a2irpu_gnt) begin
+                    first_a_req_cycle = cycle_count;
+                    $display("Neighbor monitor: first A request handshake cycle=%0d addr=%0d",
+                             cycle_count, irpu2neib_a_addr);
+                end
+                if ((first_b_req_cycle < 0) && irpu2neib_b_req[0] &&
+                    neib_b2irpu_gnt) begin
+                    first_b_req_cycle = cycle_count;
+                    first_b_addr       = irpu2neib_b_addr;
+                    $display("Neighbor monitor: first B request handshake cycle=%0d addr=%0d",
+                             cycle_count, irpu2neib_b_addr);
+                end
+                if (neib_a2irpu_rd_lat) begin
+                    if (first_a_rd_lat_cycle < 0)
+                        first_a_rd_lat_cycle = cycle_count;
+                    $display("Neighbor monitor: A rd_lat cycle=%0d", cycle_count);
+                end
+                if (neib_b2irpu_rd_lat) begin
+                    if (first_b_rd_lat_cycle < 0)
+                        first_b_rd_lat_cycle = cycle_count;
+                    $display("Neighbor monitor: B rd_lat cycle=%0d", cycle_count);
+                end
+                if (!raw_neib_done_amvp)
+                    monitor_raw_seen_low = 1'b1;
+                if (monitor_raw_seen_low && raw_neib_done_amvp &&
+                    (raw_done_cycle < 0))
+                    raw_done_cycle = cycle_count;
+                if (neib_done_amvp && (qualified_cycle < 0)) begin
+                    qualified_cycle = cycle_count;
+                    $display("Neighbor monitor: launch=%0d first_A_req=%0d first_B_req=%0d " +
+                             "A_rd_lat=%0d B_rd_lat=%0d raw_done=%0d qualified_done=%0d",
+                             launch_cycle, first_a_req_cycle, first_b_req_cycle,
+                             first_a_rd_lat_cycle, first_b_rd_lat_cycle,
+                             raw_done_cycle, qualified_cycle);
+                    monitor_active = 1'b0;
+                end
+            end
+        end
+    end
+
     task check;
         input condition;
         input [8*96-1:0] message;
@@ -225,6 +311,25 @@ module tb_vc_mvp_dec_neib_top;
         end
     endtask
 
+    // vc_mvp_rd_mem forms the first B read as follows.  The public wrapper
+    // exposes full_addr[5:1], because each SRAM word contains two neighbors.
+    function [4:0] expected_first_b_addr;
+        input [2:0] txn_ctux_f;
+        input [2:0] txn_cux_f;
+        input [2:0] txn_cuy_f;
+        reg   [2:0] neib_b_addr_f;
+        reg   [5:0] full_addr_f;
+        begin
+            neib_b_addr_f = {((reg_pic_width_ctu_m1[2]) ? txn_ctux_f[2] :
+                              (txn_ctux_f[2] ^ txn_cuy_f[1])), txn_ctux_f[1:0]};
+            if (txn_cux_f == 3'd0)
+                full_addr_f = {neib_b_addr_f, 3'd0} - 6'd8;
+            else
+                full_addr_f = {neib_b_addr_f, txn_cux_f - 3'd1};
+            expected_first_b_addr = full_addr_f[5:1];
+        end
+    endfunction
+
     task start_transaction;
         input              txn_skip;
         input              txn_part_mode;
@@ -233,6 +338,7 @@ module tb_vc_mvp_dec_neib_top;
         input      [2:0]   txn_y;
         input      [1:0]   txn_a;
         input      [2:0]   txn_b;
+        input      [6:0]   txn_ctux;
         begin
             @(negedge clk_vc);
             ccu2irpu_valid     = 1'b1;
@@ -245,6 +351,7 @@ module tb_vc_mvp_dec_neib_top;
             dec_txn_cuy       = txn_y;
             dec_txn_a_avail   = txn_a;
             dec_txn_b_avail   = txn_b;
+            dec_txn_ctux      = txn_ctux;
             check(irpu2ccu_rdy, "controller must be ready before Neighbor launch");
             @(posedge clk_vc);
             #1;
@@ -258,33 +365,14 @@ module tb_vc_mvp_dec_neib_top;
 
     task wait_for_neighbor;
         begin : wait_loop
-            launch_cycle      = -1;
-            raw_done_cycle    = -1;
-            qualified_cycle   = -1;
-            raw_seen_low      = 1'b0;
-            raw_high_at_launch= 1'b0;
             for (k = 0; k < 80; k = k + 1) begin
                 @(negedge clk_vc);
-                if ((launch_cycle < 0) && dec_neib_start) begin
-                    launch_cycle       = cycle_count;
-                    raw_high_at_launch = raw_neib_done_amvp;
-                end
-                if ((launch_cycle >= 0) && !raw_neib_done_amvp)
-                    raw_seen_low = 1'b1;
-                if (raw_seen_low && raw_neib_done_amvp && (raw_done_cycle < 0))
-                    raw_done_cycle = cycle_count;
-                if (neib_done_amvp) begin
-                    qualified_cycle = cycle_count;
+                if (qualified_cycle >= 0)
                     disable wait_loop;
-                end
             end
         end
-        if ((raw_done_cycle < 0) && raw_high_at_launch)
-            raw_done_cycle = launch_cycle;
         check(launch_cycle >= 0, "Neighbor launch must be observed");
         check(qualified_cycle >= 0, "qualified Neighbor completion must occur");
-        $display("Neighbor timing: launch=%0d raw_done=%0d qualified=%0d",
-                 launch_cycle, raw_done_cycle, qualified_cycle);
     endtask
 
     task retire_controller;
