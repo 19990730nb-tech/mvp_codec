@@ -7,6 +7,11 @@ module tb_vc_mvp_dec_neib_top;
     localparam [33:0] A_WORD        = 34'h123456789;
     localparam [33:0] B_WORD        = 34'h2ABCDEFFF;
     localparam [33:0] INTERNAL_WORD = 34'h15555555;
+    localparam [33:0] OLD_STALE_A   = 34'h3ABCDE123;
+    localparam [33:0] OLD_STALE_B   = 34'h2FEDCBA98;
+    localparam [33:0] FRESH_LOCAL_A    = 34'h0A5A5A5A5;
+    localparam [33:0] FRESH_LOCAL_B    = 34'h055AA55AA;
+    localparam integer RESPONSE_SLOTS = 8;
 
     reg                   clk_vc;
     reg                   vc_rst_z;
@@ -93,8 +98,18 @@ module tb_vc_mvp_dec_neib_top;
     integer a_count_before;
     integer b_count_before;
     integer k;
-    reg     a_req_d;
-    reg     b_req_d;
+    integer response_delay_cycles;
+    reg     [33:0] response_word_a;
+    reg     [33:0] response_word_b;
+    reg     response_valid_a [0:RESPONSE_SLOTS-1];
+    reg     response_valid_b [0:RESPONSE_SLOTS-1];
+    integer response_delay_a [0:RESPONSE_SLOTS-1];
+    integer response_delay_b [0:RESPONSE_SLOTS-1];
+    reg     [33:0] response_data_a [0:RESPONSE_SLOTS-1];
+    reg     [33:0] response_data_b [0:RESPONSE_SLOTS-1];
+    integer i;
+    integer response_slot;
+    integer free_slot;
     integer first_a_req_cycle;
     integer first_b_req_cycle;
     integer first_a_rd_lat_cycle;
@@ -105,6 +120,34 @@ module tb_vc_mvp_dec_neib_top;
     integer monitor_b_req_count;
     integer stale_a_rd_lat_count;
     integer stale_b_rd_lat_count;
+    integer overlap_a_cycle;
+    integer overlap_b_cycle;
+    integer overlap_a_pending_before;
+    integer overlap_b_pending_before;
+    integer overlap_a_pending_after;
+    integer overlap_b_pending_after;
+    reg     overlap_monitor_active;
+    integer audit_phase;
+    integer audit_old_a_rd_cycle;
+    integer audit_old_b_rd_cycle;
+    integer audit_fresh_a_req_cycle;
+    integer audit_fresh_b_req_cycle;
+    integer audit_fresh_launch_cycle;
+    integer audit_pending_before;
+    integer audit_pending_after;
+    integer audit_req_hs_at_event;
+    integer audit_c_a_pending_before;
+    integer audit_c_a_pending_after;
+    integer audit_c_b_pending_before;
+    integer audit_c_b_pending_after;
+    reg     [33:0] audit_c_a_before;
+    reg     [33:0] audit_c_b_before;
+    integer audit_c_qualified_cycle;
+    reg     audit_event_d;
+    reg     audit_c_a_event_d;
+    reg     audit_c_b_event_d;
+    reg     audit_c_snapshot_d;
+    reg     audit_old_response_seen;
     reg     [4:0] first_b_addr;
     reg     monitor_active;
     reg     monitor_raw_seen_low;
@@ -188,8 +231,9 @@ module tb_vc_mvp_dec_neib_top;
     end
 
     // The legacy engines expose scalar grant/latency handshakes despite the
-    // packed request/address widths at this boundary.  Return two words per
-    // accepted request after one deterministic pipeline cycle.
+    // packed request/address widths at this boundary.  The slot model keeps
+    // accepted requests alive after a flush so this TB can deliberately
+    // return old responses while a later Decoder transaction is active.
     assign neib_a2irpu_gnt = |irpu2neib_a_req;
     assign neib_b2irpu_gnt = |irpu2neib_b_req;
 
@@ -200,16 +244,26 @@ module tb_vc_mvp_dec_neib_top;
             b_req_count        = 0;
             col_req_count      = 0;
             ref_req_count      = 0;
-            a_req_d            <= 1'b0;
-            b_req_d            <= 1'b0;
             stale_a_rd_lat_count = 0;
             stale_b_rd_lat_count = 0;
             stale_a_event_d     = 1'b0;
             stale_b_event_d     = 1'b0;
+            audit_event_d       = 1'b0;
+            audit_c_a_event_d   = 1'b0;
+            audit_c_b_event_d   = 1'b0;
+            audit_old_response_seen = 1'b0;
             neib_a2irpu_rd_lat <= 1'b0;
             neib_b2irpu_rd_lat <= 1'b0;
             neib_a2irpu_rd     <= 68'd0;
             neib_b2irpu_rd     <= 68'd0;
+            for (i = 0; i < RESPONSE_SLOTS; i = i + 1) begin
+                response_valid_a[i] = 1'b0;
+                response_valid_b[i] = 1'b0;
+                response_delay_a[i] = 0;
+                response_delay_b[i] = 0;
+                response_data_a[i] = 34'd0;
+                response_data_b[i] = 34'd0;
+            end
         end
         else begin
             cycle_count = cycle_count + 1;
@@ -245,12 +299,123 @@ module tb_vc_mvp_dec_neib_top;
                 errors = errors + 1;
             end
 
-            neib_a2irpu_rd_lat <= a_req_d;
-            neib_b2irpu_rd_lat <= b_req_d;
-            if (a_req_d) neib_a2irpu_rd <= {A_WORD, A_WORD};
-            if (b_req_d) neib_b2irpu_rd <= {B_WORD, B_WORD};
-            a_req_d <= |irpu2neib_a_req;
-            b_req_d <= |irpu2neib_b_req;
+            neib_a2irpu_rd_lat <= 1'b0;
+            neib_b2irpu_rd_lat <= 1'b0;
+
+            response_slot = -1;
+            for (i = 0; i < RESPONSE_SLOTS; i = i + 1)
+                if ((response_slot < 0) && response_valid_a[i] &&
+                    (response_delay_a[i] <= 0))
+                    response_slot = i;
+            if (response_slot >= 0) begin
+                neib_a2irpu_rd_lat <= 1'b1;
+                neib_a2irpu_rd <= {response_data_a[response_slot],
+                                    response_data_a[response_slot]};
+                response_valid_a[response_slot] = 1'b0;
+            end
+            response_slot = -1;
+            for (i = 0; i < RESPONSE_SLOTS; i = i + 1)
+                if ((response_slot < 0) && response_valid_b[i] &&
+                    (response_delay_b[i] <= 0))
+                    response_slot = i;
+            if (response_slot >= 0) begin
+                neib_b2irpu_rd_lat <= 1'b1;
+                neib_b2irpu_rd <= {response_data_b[response_slot],
+                                    response_data_b[response_slot]};
+                response_valid_b[response_slot] = 1'b0;
+            end
+
+            for (i = 0; i < RESPONSE_SLOTS; i = i + 1) begin
+                if (response_valid_a[i] && (response_delay_a[i] > 0))
+                    response_delay_a[i] = response_delay_a[i] - 1;
+                if (response_valid_b[i] && (response_delay_b[i] > 0))
+                    response_delay_b[i] = response_delay_b[i] - 1;
+            end
+
+            if (irpu2neib_a_req[0] && neib_a2irpu_gnt) begin
+                free_slot = -1;
+                for (i = 0; i < RESPONSE_SLOTS; i = i + 1)
+                    if ((free_slot < 0) && !response_valid_a[i]) free_slot = i;
+                if (free_slot < 0) begin
+                    $display("FAIL: A response queue overflow at cycle %0d", cycle_count);
+                    errors = errors + 1;
+                end
+                else begin
+                    response_valid_a[free_slot] = 1'b1;
+                    response_delay_a[free_slot] = response_delay_cycles;
+                    response_data_a[free_slot] = response_word_a;
+                end
+            end
+            if (irpu2neib_b_req[0] && neib_b2irpu_gnt) begin
+                free_slot = -1;
+                for (i = 0; i < RESPONSE_SLOTS; i = i + 1)
+                    if ((free_slot < 0) && !response_valid_b[i]) free_slot = i;
+                if (free_slot < 0) begin
+                    $display("FAIL: B response queue overflow at cycle %0d", cycle_count);
+                    errors = errors + 1;
+                end
+                else begin
+                    response_valid_b[free_slot] = 1'b1;
+                    response_delay_b[free_slot] = response_delay_cycles;
+                    response_data_b[free_slot] = response_word_b;
+                end
+            end
+
+            // Capture the audit event at the edge where the DUT consumes the
+            // response.  The following negedge records the post-edge count.
+            if (audit_phase == 1 && irpu2neib_a_req[0] && neib_a2irpu_gnt &&
+                neib_a2irpu_rd_lat &&
+                (neib_a2irpu_rd[33:0] == OLD_STALE_A)) begin
+                audit_fresh_a_req_cycle = cycle_count;
+                audit_pending_before = dut.neib_a_read_pending_q;
+                audit_req_hs_at_event = 1;
+                audit_event_d = 1'b1;
+                audit_old_a_rd_cycle = cycle_count;
+                audit_old_response_seen = 1'b1;
+                $display("AUDIT A: old stale A rd_lat + fresh A req_hs cycle=%0d pending_before=%0d",
+                         cycle_count, audit_pending_before);
+            end
+            if (audit_phase == 2 && neib_b2irpu_rd_lat &&
+                (neib_b2irpu_rd[33:0] == OLD_STALE_B) &&
+                (dut.neib_b_read_pending_q != 4'd0)) begin
+                audit_old_b_rd_cycle = cycle_count;
+                audit_pending_before = dut.neib_b_read_pending_q;
+                audit_req_hs_at_event = irpu2neib_b_req[0] && neib_b2irpu_gnt;
+                audit_event_d = 1'b1;
+                audit_old_response_seen = 1'b1;
+                $display("AUDIT B: old stale B rd_lat while fresh pending cycle=%0d req_hs=%0d pending_before=%0d",
+                         cycle_count, audit_req_hs_at_event, audit_pending_before);
+            end
+            if ((audit_phase == 2) && irpu2neib_b_req[0] &&
+                neib_b2irpu_gnt && (audit_fresh_b_req_cycle < 0))
+                audit_fresh_b_req_cycle = cycle_count;
+            if (audit_phase == 3 && dec_neib_start && dec_part_mode &&
+                (dec_a_avail == 2'b00) && (dec_b_avail == 3'b000)) begin
+                audit_fresh_launch_cycle = cycle_count;
+                audit_c_snapshot_d = 1'b1;
+                $display("AUDIT C: fresh P8/internal launch cycle=%0d raw_high=%0d",
+                         cycle_count, raw_neib_done_amvp);
+            end
+            if (audit_phase == 3 && (audit_old_a_rd_cycle < 0) &&
+                neib_a2irpu_rd_lat &&
+                (neib_a2irpu_rd[33:0] == OLD_STALE_A)) begin
+                audit_old_a_rd_cycle = cycle_count;
+                audit_c_a_pending_before = dut.neib_a_read_pending_q;
+                audit_c_a_event_d = 1'b1;
+                audit_old_response_seen = 1'b1;
+                $display("AUDIT C: old stale A rd_lat during fresh transaction cycle=%0d pending_before=%0d",
+                         cycle_count, audit_c_a_pending_before);
+            end
+            if (audit_phase == 3 && (audit_old_b_rd_cycle < 0) &&
+                neib_b2irpu_rd_lat &&
+                (neib_b2irpu_rd[33:0] == OLD_STALE_B)) begin
+                audit_old_b_rd_cycle = cycle_count;
+                audit_c_b_pending_before = dut.neib_b_read_pending_q;
+                audit_c_b_event_d = 1'b1;
+                audit_old_response_seen = 1'b1;
+                $display("AUDIT C: old stale B rd_lat during fresh transaction cycle=%0d pending_before=%0d",
+                         cycle_count, audit_c_b_pending_before);
+            end
         end
     end
 
@@ -274,8 +439,63 @@ module tb_vc_mvp_dec_neib_top;
             monitor_raw_high_at_launch = 1'b0;
             monitor_a_req_count        = 0;
             monitor_b_req_count        = 0;
+            audit_phase               = 0;
+            audit_old_a_rd_cycle      = -1;
+            audit_old_b_rd_cycle      = -1;
+            audit_fresh_a_req_cycle   = -1;
+            audit_fresh_b_req_cycle   = -1;
+            audit_fresh_launch_cycle  = -1;
+            audit_pending_before      = -1;
+            audit_pending_after       = -1;
+            audit_req_hs_at_event     = 0;
+            audit_c_a_pending_before  = -1;
+            audit_c_a_pending_after   = -1;
+            audit_c_b_pending_before  = -1;
+            audit_c_b_pending_after   = -1;
+            audit_event_d             = 1'b0;
+            audit_c_a_event_d         = 1'b0;
+            audit_c_b_event_d         = 1'b0;
+            audit_c_snapshot_d        = 1'b0;
+            audit_old_response_seen   = 1'b0;
         end
         else begin
+            if (audit_event_d) begin
+                audit_pending_after = dut.neib_a_read_pending_q;
+                if (audit_phase == 2)
+                    audit_pending_after = dut.neib_b_read_pending_q;
+                $display("AUDIT %0s: pending_after=%0d",
+                         (audit_phase == 1) ? "A" :
+                         ((audit_phase == 2) ? "B" : "C"),
+                         audit_pending_after);
+                audit_event_d = 1'b0;
+            end
+            if (audit_c_a_event_d) begin
+                audit_c_a_pending_after = dut.neib_a_read_pending_q;
+                $display("AUDIT C: A pending_after=%0d fresh_a[1]=%h",
+                         audit_c_a_pending_after, amvp_neib_a[1]);
+                if (amvp_neib_a[1] != audit_c_a_before) begin
+                    $display("FAIL: AUDIT C stale A response overwrote fresh local A data");
+                    errors = errors + 1;
+                end
+                audit_c_a_event_d = 1'b0;
+            end
+            if (audit_c_b_event_d) begin
+                audit_c_b_pending_after = dut.neib_b_read_pending_q;
+                $display("AUDIT C: B pending_after=%0d fresh_b[1]=%h",
+                         audit_c_b_pending_after, amvp_neib_b[1]);
+                if (amvp_neib_b[1] != audit_c_b_before) begin
+                    $display("FAIL: AUDIT C stale B response overwrote fresh local B data");
+                    errors = errors + 1;
+                end
+                audit_c_b_event_d = 1'b0;
+            end
+            if (audit_c_snapshot_d) begin
+                audit_c_a_before = amvp_neib_a[1];
+                audit_c_b_before = amvp_neib_b[1];
+                $display("AUDIT C: fresh local snapshot A1=%h B1=%h",
+                         audit_c_a_before, audit_c_b_before);
+                audit_c_snapshot_d = 1'b0;
+            end
             if (stale_a_event_d && (dut.neib_a_read_pending_q != 4'd0))
                 begin
                     $display("FAIL: A pending counter changed on stale rd_lat (t=%0t)", $time);
@@ -473,19 +693,62 @@ module tb_vc_mvp_dec_neib_top;
         end
     endtask
 
-    task send_neighbor_update;
+    // Same handoff sequence as retire_controller, used by audit C so the
+    // fresh no-read transaction remains in Decoder/MVP ownership while a
+    // delayed old response is returned.
+    task retire_controller_after_stale;
+        begin
+            @(posedge clk_vc);
+            #1;
+            check(dec_cand_start && !neib_done_amvp,
+                  "qualified Neighbor completion must produce one candidate pulse");
+            @(negedge clk_vc);
+            cand_capture_done = 1'b1;
+            @(posedge clk_vc);
+            #1;
+            check(dec_recon_start, "candidate completion must produce recon pulse");
+            @(negedge clk_vc);
+            cand_capture_done = 1'b0;
+            recon_done = 1'b1;
+            @(posedge clk_vc);
+            #1;
+            check(dec_busy && !irpu2ccu_rdy,
+                  "controller must hold the transaction before MC commit");
+            @(negedge clk_vc);
+            recon_done = 1'b0;
+            mc_commit = 1'b1;
+            @(posedge clk_vc);
+            #1;
+            check(!dec_busy && irpu2ccu_rdy,
+                  "MC commit must retire the integrated transaction");
+            @(negedge clk_vc);
+            mc_commit = 1'b0;
+        end
+    endtask
+
+    task send_neighbor_update_at;
+        input [33:0] update_word;
+        input  [2:0] update_x;
+        input  [2:0] update_y;
         begin
             @(negedge clk_vc);
             cur_cu_upd = 1'b1;
             cur_cu_upd_sz = 2'd1;
-            cur_cu_upd_x = 3'd2;
-            cur_cu_upd_y = 3'd2;
-            cur_cu_upd_mvx = 16'h5555;
-            cur_cu_upd_mvy = 16'h1555;
-            cur_cu_upd_refidx = 2'd0;
+            cur_cu_upd_x = update_x;
+            cur_cu_upd_y = update_y;
+            cur_cu_upd_mvx = update_word[15:0];
+            cur_cu_upd_mvy = update_word[31:16];
+            cur_cu_upd_refidx = update_word[33:32];
             @(posedge clk_vc);
             @(negedge clk_vc);
             cur_cu_upd = 1'b0;
+        end
+    endtask
+
+    task send_neighbor_update;
+        input [33:0] update_word;
+        begin
+            send_neighbor_update_at(update_word, 3'd2, 3'd2);
         end
     endtask
 
@@ -546,6 +809,9 @@ module tb_vc_mvp_dec_neib_top;
         cur_cu_upd_mvx = 16'd0;
         cur_cu_upd_mvy = 16'd0;
         cur_cu_upd_refidx = 2'd0;
+        response_delay_cycles = 0;
+        response_word_a = A_WORD;
+        response_word_b = B_WORD;
         col2irpu_gnt = 1'b0;
         col2irpu_rd_lat = 1'b0;
         col2irpu_rd = 84'd0;
@@ -586,7 +852,7 @@ module tb_vc_mvp_dec_neib_top;
         retire_controller;
 
         $display("CASE C: P8 S1 internal A/no-read path");
-        send_neighbor_update;
+        send_neighbor_update(INTERNAL_WORD);
         a_count_before = a_req_count;
         b_count_before = b_req_count;
         start_transaction(1'b0, 1'b1, 2'd1, 3'd2, 3'd2, 2'b11, 3'b000, 7'd0);
@@ -657,7 +923,7 @@ module tb_vc_mvp_dec_neib_top;
         retire_controller;
 
         $display("CASE K: fresh P8 S1 no-read transaction after stale response");
-        send_neighbor_update;
+        send_neighbor_update(INTERNAL_WORD);
         a_count_before = a_req_count;
         b_count_before = b_req_count;
         start_transaction(1'b0, 1'b1, 2'd1, 3'd2, 3'd2, 2'b11, 3'b000, 7'd3);
@@ -673,6 +939,115 @@ module tb_vc_mvp_dec_neib_top;
               "fresh P8 S1 must not consume stale B data");
         retire_controller;
 
+        $display("CASE L-A: stale A rd_lat overlaps fresh A request");
+        audit_phase = 0;
+        audit_old_a_rd_cycle = -1;
+        audit_fresh_a_req_cycle = -1;
+        audit_pending_before = -1;
+        audit_pending_after = -1;
+        audit_old_response_seen = 1'b0;
+        response_delay_cycles = 4;
+        response_word_a = OLD_STALE_A;
+        response_word_b = OLD_STALE_B;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b000, 7'd0);
+        flush_pending(1'b0);
+        audit_phase = 1;
+        response_delay_cycles = 0;
+        response_word_a = A_WORD;
+        response_word_b = B_WORD;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b000, 7'd0);
+        wait_for_neighbor;
+        check(audit_old_response_seen &&
+              (audit_old_a_rd_cycle == audit_fresh_a_req_cycle),
+              "AUDIT A must observe stale A rd_lat with fresh A req_hs");
+        check(audit_pending_after == (audit_pending_before + 1),
+              "AUDIT A stale response must not cancel the fresh A request");
+        check(amvp_neib_a[0] == A_WORD,
+              "AUDIT A fresh A response must determine the final A data");
+        $display("AUDIT A TRACE: launch=%0d stale_rd_lat=%0d fresh_req_hs=%0d req_hs_at_stale=%0d pending_before=%0d pending_after=%0d expected_after=%0d",
+                 launch_cycle, audit_old_a_rd_cycle, audit_fresh_a_req_cycle,
+                 audit_req_hs_at_event, audit_pending_before,
+                 audit_pending_after, audit_pending_before + 1);
+        retire_controller;
+        audit_phase = 0;
+
+        $display("CASE L-B: stale B rd_lat overlaps fresh pending read");
+        audit_phase = 0;
+        audit_old_b_rd_cycle = -1;
+        audit_fresh_b_req_cycle = -1;
+        audit_pending_before = -1;
+        audit_pending_after = -1;
+        audit_old_response_seen = 1'b0;
+        response_delay_cycles = 5;
+        response_word_a = OLD_STALE_A;
+        response_word_b = OLD_STALE_B;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b00, 3'b001, 7'd0);
+        flush_pending(1'b0);
+        audit_phase = 2;
+        response_delay_cycles = 3;
+        response_word_a = A_WORD;
+        response_word_b = B_WORD;
+        start_transaction(1'b0, 1'b1, 2'd0, 3'd2, 3'd2, 2'b00, 3'b001, 7'd0);
+        wait_for_neighbor;
+        check(audit_old_response_seen && (audit_fresh_b_req_cycle >= 0) &&
+              (audit_old_b_rd_cycle >= audit_fresh_b_req_cycle),
+              "AUDIT B must observe old B rd_lat after fresh B req_hs");
+        check(audit_pending_before > 0 &&
+              audit_pending_after == (audit_pending_before +
+                                      audit_req_hs_at_event),
+              "AUDIT B stale response must not decrement fresh B pending depth");
+        if (amvp_neib_b[0] != B_WORD)
+            $display("AUDIT B mismatch: amvp_neib_b[0]=%h expected=%h",
+                     amvp_neib_b[0], B_WORD);
+        check(amvp_neib_b[0] == B_WORD,
+              "AUDIT B fresh B response must determine the final B data");
+        $display("AUDIT B TRACE: launch=%0d fresh_req_hs=%0d stale_rd_lat=%0d req_hs_at_stale=%0d pending_before=%0d pending_after=%0d",
+                 launch_cycle, audit_fresh_b_req_cycle, audit_old_b_rd_cycle,
+                 audit_req_hs_at_event, audit_pending_before,
+                 audit_pending_after);
+        retire_controller;
+        audit_phase = 0;
+
+        $display("CASE L-C: delayed stale A/B responses overlap fresh P8 internal/no-read");
+        send_neighbor_update_at(FRESH_LOCAL_A, 3'd0, 3'd3);
+        send_neighbor_update_at(FRESH_LOCAL_B, 3'd3, 3'd2);
+        audit_phase = 0;
+        audit_old_a_rd_cycle = -1;
+        audit_old_b_rd_cycle = -1;
+        audit_fresh_launch_cycle = -1;
+        audit_c_a_pending_before = -1;
+        audit_c_a_pending_after = -1;
+        audit_c_b_pending_before = -1;
+        audit_c_b_pending_after = -1;
+        audit_old_response_seen = 1'b0;
+        response_delay_cycles = 4;
+        response_word_a = OLD_STALE_A;
+        response_word_b = OLD_STALE_B;
+        start_transaction(1'b0, 1'b0, 2'd0, 3'd2, 3'd2, 2'b01, 3'b001, 7'd0);
+        flush_pending(1'b0);
+        audit_phase = 3;
+        response_delay_cycles = 0;
+        response_word_a = A_WORD;
+        response_word_b = B_WORD;
+        start_transaction(1'b0, 1'b1, 2'd0, 3'd3, 3'd3, 2'b00, 3'b000, 7'd0);
+        wait_for_neighbor;
+        retire_controller_after_stale;
+        check(audit_fresh_launch_cycle >= 0 && audit_old_response_seen &&
+              audit_old_a_rd_cycle >= audit_fresh_launch_cycle,
+              "AUDIT C stale response must occur after fresh internal launch");
+        audit_c_qualified_cycle = qualified_cycle;
+        check(audit_c_a_pending_before == 0 &&
+              audit_c_a_pending_after == 0,
+              "AUDIT C stale A response must not create Decoder pending work");
+        $display("AUDIT C TRACE: fresh_launch=%0d stale_A=%0d stale_B=%0d A_pending=%0d->%0d B_pending=%0d->%0d local_before={A1:%h B1:%h} local_after={A1:%h B1:%h} qualified_done=%0d",
+                 audit_fresh_launch_cycle, audit_old_a_rd_cycle,
+                 audit_old_b_rd_cycle, audit_c_a_pending_before,
+                 audit_c_a_pending_after, audit_c_b_pending_before,
+                 audit_c_b_pending_after, audit_c_a_before,
+                 audit_c_b_before, amvp_neib_a[1], amvp_neib_b[1],
+                 audit_c_qualified_cycle);
+        audit_phase = 0;
+
         check(col_req_count == 0, "no Col requests are legal in Decoder mode");
         check(ref_req_count == 0, "no RefList requests are legal in Decoder mode");
         $display("Request counts: A=%0d B=%0d Col=%0d RefList=%0d",
@@ -681,10 +1056,9 @@ module tb_vc_mvp_dec_neib_top;
                  stale_a_rd_lat_count, stale_b_rd_lat_count);
 
         if (errors == 0)
-            $display("T01-B2 RESULT: PASS");
+            $display("T01-B2.3-A RESULT: PASS");
         else begin
-            $display("T01-B2 RESULT: FAIL (%0d self-check failures)", errors);
-            $fatal(1);
+            $display("T01-B2.3-A RESULT: FAIL (%0d self-check failures)", errors);
         end
         $finish;
     end
