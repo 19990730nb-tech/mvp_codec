@@ -1,6 +1,8 @@
 from html import escape
 import os
 from pathlib import Path
+import shutil
+import struct
 import subprocess
 from textwrap import dedent
 
@@ -84,28 +86,82 @@ def write_pair(relative_stem, svg, width, height):
 
 
 def render_png(svg_path, png_path, width, height):
-    candidates = [
-        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft/Edge/Application/msedge.exe",
-        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Edge/Application/msedge.exe",
-        Path(os.environ.get("ProgramFiles", "")) / "Microsoft/Edge/Application/msedge.exe",
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/Edge/Application/msedge.exe",
-    ]
-    edge = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if edge is None:
-        raise RuntimeError("Microsoft Edge is required to rasterize generated SVG files")
-    subprocess.run([
-        str(edge),
-        "--headless",
-        "--disable-gpu",
-        "--hide-scrollbars",
-        "--run-all-compositor-stages-before-draw",
-        "--virtual-time-budget=1000",
-        f"--window-size={width},{height}",
-        f"--screenshot={png_path}",
-        svg_path.as_uri(),
-    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    edge_candidates = [shutil.which("msedge"), shutil.which("microsoft-edge")]
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+        root = os.environ.get(env_name)
+        if root:
+            edge_candidates.append(Path(root) / "Microsoft/Edge/Application/msedge.exe")
+    edge = next((Path(candidate) for candidate in edge_candidates if candidate and Path(candidate).is_file()), None)
+    inkscape = shutil.which("inkscape")
+    try:
+        import cairosvg
+    except Exception:
+        cairosvg = None
+
+    attempts = []
+    if edge is not None:
+        attempts.append(("Microsoft Edge", lambda: subprocess.run([
+            str(edge),
+            "--headless",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=1000",
+            f"--window-size={width},{height}",
+            f"--screenshot={png_path}",
+            svg_path.as_uri(),
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)))
+    if inkscape is not None:
+        attempts.append(("Inkscape", lambda: subprocess.run([
+            inkscape,
+            str(svg_path),
+            "--export-type=png",
+            f"--export-filename={png_path}",
+            f"--export-width={width}",
+            f"--export-height={height}",
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)))
+    if cairosvg is not None:
+        attempts.append(("CairoSVG", lambda: cairosvg.svg2png(
+            url=str(svg_path),
+            write_to=str(png_path),
+            output_width=width,
+            output_height=height,
+        )))
+
+    errors = []
+    for name, render in attempts:
+        try:
+            png_path.unlink(missing_ok=True)
+            render()
+            validate_png(png_path, width, height)
+            print(f"rasterizer: {name}")
+            return
+        except Exception as error:
+            attempts_message = f"{name}: {error}".replace("\n", " ")[:240]
+            errors.append(attempts_message)
+
+    supported = "Microsoft Edge, Inkscape, CairoSVG"
+    if not attempts:
+        raise RuntimeError(f"No supported rasterizer available; supported rasterizers: {supported}")
+    raise RuntimeError(f"Supported rasterizers failed ({supported}): {'; '.join(errors)}")
+
+
+def validate_png(png_path, width, height):
     if not png_path.is_file() or png_path.stat().st_size == 0:
-        raise RuntimeError(f"SVG rasterizer did not create {png_path}")
+        raise RuntimeError(f"rasterizer did not create {png_path}")
+    with png_path.open("rb") as stream:
+        signature = stream.read(8)
+        length_bytes = stream.read(4)
+        chunk = stream.read(4)
+        dimensions = stream.read(8)
+    if signature != b"\x89PNG\r\n\x1a\n" or chunk != b"IHDR" or len(dimensions) != 8:
+        raise RuntimeError(f"invalid PNG signature or IHDR in {png_path}")
+    actual_width, actual_height = struct.unpack(">II", dimensions)
+    if actual_width != width or actual_height != height:
+        raise RuntimeError(
+            f"unexpected PNG dimensions for {png_path}: "
+            f"{actual_width}x{actual_height}, expected {width}x{height}"
+        )
 
 
 def make_root_diagram():
@@ -123,8 +179,8 @@ def make_root_diagram():
         (545, 150, 255, 180, ["vc_mvp_dec_neib_top", "vc_mvp_dec_neib_adapter", "real Neighbor hierarchy", "A/B snapshot and drain"], "reuse"),
         (840, 150, 255, 180, ["vc_mvp_dec_cand", "real vc_mvp_cand_gen", "A=A1  B=B1", "C=B0 then B2", "candidate0 only"], "reuse"),
         (1115, 150, 245, 180, ["vc_mvp_dec_recon", "signed 17-bit add", "P_SKIP zero rule", "final MV and ref_idx"], "decoder"),
-        (1380, 150, 255, 180, ["vc_mvp_dec_mc_adapter", "lane and packet select", "held-valid backpressure", "dec_send"], "decoder"),
-        (1665, 150, 200, 145, ["mrg2mc interface", "MC acknowledgement", "mc_commit"], "external"),
+        (1380, 150, 255, 180, ["vc_mvp_dec_mc_adapter", "lane and packet select", "rdy stays asserted when ack is low", "dec_send"], "decoder"),
+        (1665, 150, 200, 145, ["MC / mrg2mc interface", "MC acknowledgement", "mc2mrg_cand_ack"], "external"),
     ]
     for x, y, w, h, labels, style in blocks:
         parts.append(box(x, y, w, h, labels, style))
@@ -135,7 +191,7 @@ def make_root_diagram():
         (800, 840, "capture"),
         (1095, 1115, "MVP"),
         (1360, 1380, "DEC_SEND"),
-        (1635, 1665, "packet"),
+        (1635, 1665, "dec_mrg2mc_cand_rdy/data"),
     ]:
         parts.append(arrow(x1, 220, x2, 220))
         parts.append(note((x1 + x2) / 2, 205, label, "tiny"))
@@ -145,15 +201,16 @@ def make_root_diagram():
         "cur_cu_upd = mc_commit",
         "committed final MV / ref_idx / coordinates",
     ], "reuse"))
-    parts.append(polyline([(1765, 295), (1765, 430), (1270, 430)], "feedback"))
-    parts.append(note(1570, 414, "acknowledged transaction retires once", "small"))
-    parts.append(arrow(1665, 265, 1270, 430, "feedback"))
-    parts.append(polyline([(585, 445), (470, 445), (470, 565), (675, 565), (675, 500)], "feedback"))
-    parts.append(note(525, 552, "rolling Neighbor state", "small"))
+    parts.append(arrow(1665, 270, 1635, 270, "feedback"))
+    parts.append(note(1650, 255, "mc2mrg_cand_ack", "tiny"))
+    parts.append(polyline([(1505, 330), (1505, 360), (1270, 360), (1270, 390)], "feedback"))
+    parts.append(note(1385, 350, "mc_commit", "small"))
+    parts.append(polyline([(585, 445), (500, 445), (500, 355), (675, 355), (675, 330)], "feedback"))
+    parts.append(note(525, 345, "cur_cu_upd / committed MV context", "tiny"))
 
     parts.append(box(35, 620, 1815, 125, [
         "P8 serial dependency",
-        "S0 -> MC commit/update -> S1 -> MC commit/update -> S2 -> MC commit/update -> S3",
+        "S0 -> commit/update -> S1 -> commit/update -> S2 -> commit/update -> S3 -> commit/update",
         "next expected sub-index advances only after the preceding mc_commit",
     ], "reuse"))
 
@@ -223,7 +280,7 @@ def make_fig2():
 
     parts.append(box(125, 500, 1350, 120, [
         "MC adapter",
-        "P8 lane 0, mask 3'b001, size code 1; packet held until mc2mrg_cand_ack",
+        "P8 lane 0, mask 3'b001, size code 1; rdy stays asserted while ack is low",
         "mc_commit = |(rdy & ack); dec_mrg2mc_cand_done is a registered one-cycle pulse",
     ], "decoder"))
     for x in [205, 585, 965, 1345]:
@@ -240,30 +297,29 @@ def make_fig2():
 
 
 def make_fig3():
-    width, height = 1600, 980
+    width, height = 1750, 980
     parts = [svg_header(
         width,
         height,
         "AVC Candidate, P_SKIP, Reconstruction, and MC Mapping",
         "Phase-1 AVC uses candidate0, signed component arithmetic, and the reused mrg2mc packet interface",
     )]
-    parts.append(box(45, 135, 300, 200, ["Neighbor candidates", "A = A1", "B = B1", "C = B0 then B2", "A0 masked"], "reuse"))
-    parts.append(box(460, 105, 350, 255, ["AVC candidate0", "none -> zero", "one operand -> that operand", "otherwise signed MED", "candidate1 disabled"], "reuse"))
-    parts.append(arrow(345, 235, 460, 235))
+    parts.append(box(45, 350, 300, 200, ["Neighbor candidates", "A = A1", "B = B1", "C = B0 then B2", "A0 masked"], "reuse"))
+    parts.append(box(430, 105, 360, 220, ["Normal Inter", "MVP X/Y + MVD X/Y", "explicit signed 17-bit", "low 16 bits retained", "final MV"], "decoder"))
+    parts.append(box(430, 575, 360, 235, ["P_SKIP", "top16 or left16", "or available A1/B1 is zero", "true -> final MV zero", "false -> spatial MVP", "MVD ignored; ref_idx 0"], "decoder"))
+    parts.append(arrow(345, 430, 430, 215))
+    parts.append(polyline([(345, 470), (380, 470), (380, 690), (430, 690)], "arrow"))
 
-    parts.append(box(930, 105, 300, 255, ["Normal Inter", "MVP X/Y + MVD X/Y", "explicit signed 17-bit", "low 16 bits retained", "final MV = {Y, X}"], "decoder"))
-    parts.append(arrow(810, 235, 930, 235))
-    parts.append(box(1270, 105, 285, 255, ["P16 / P8 MC", "P16 lane 1", "P8 lane 0", "P_SKIP lane 1", "lane 2 unused"], "decoder"))
-    parts.append(arrow(1230, 235, 1270, 235))
+    parts.append(box(870, 310, 300, 190, ["final MV / ref_idx", "normal: low-16 result", "skip: zero or spatial MVP", "common result boundary"], "decoder"))
+    parts.append(polyline([(790, 215), (830, 215), (830, 365), (870, 365)], "arrow"))
+    parts.append(polyline([(790, 690), (830, 690), (830, 445), (870, 445)], "arrow"))
 
-    parts.append(box(460, 470, 350, 255, ["P_SKIP", "top16 or left16", "or available A1/B1 is zero", "true -> final MV zero", "false -> spatial MVP", "MVD ignored; ref_idx 0"], "decoder"))
-    parts.append(polyline([(610, 360), (610, 470)], "arrow"))
-    parts.append(box(930, 470, 300, 255, ["Packet", "valid + picture coordinates", "two size fields", "ref_idx + final MV", "stable while backpressured"], "decoder"))
-    parts.append(arrow(810, 600, 930, 600))
-    parts.append(box(1270, 470, 285, 255, ["Retirement", "MC acknowledgement", "mc_commit", "registered done pulse", "cur_cu_upd"], "reuse"))
-    parts.append(arrow(1230, 600, 1270, 600))
+    parts.append(box(1230, 310, 300, 190, ["common MC adapter", "P8 -> lane 0", "P16/P_SKIP -> lane 1", "lane 2 unused", "packet held while mc2mrg_cand_ack is low"], "decoder"))
+    parts.append(arrow(1170, 405, 1230, 405))
+    parts.append(box(1580, 310, 145, 190, ["retirement", "ack", "mc_commit", "done/update"], "reuse"))
+    parts.append(arrow(1530, 405, 1580, 405))
 
-    parts.append(box(80, 820, 1475, 70, [
+    parts.append(box(80, 875, 1645, 70, [
         "Phase-1 tie-offs: NUM_REF=1, Candidate-side cur_ref_idx=0, sanitized Neighbor ref fields, temporal/Col and scaling inactive, RefList traversal inactive",
     ], "disabled"))
     return finish_svg(parts), width, height
@@ -273,7 +329,7 @@ def make_spec():
     return dedent('''
     # AVC Decoder MVP Architecture Spec v0.1
 
-    > Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution remain externally simulator-blocked. No final Candidate or full-pipeline PASS is claimed.
+    > Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution are pending execution on a capable VCS host. No final Candidate or full-pipeline PASS is claimed.
 
     ## 0. Source of truth and scope
 
@@ -387,7 +443,7 @@ def make_spec():
     - `dec_mrg2mc_cand_done` is a registered one-cycle pulse after the accepted handshake.
     - `cur_cu_upd` is generated from `mc_commit` and carries final MV, reference index, and coordinates into rolling Neighbor state.
 
-    The packet and transaction remain stable while MC backpressure holds ready low.
+    While `mc2mrg_cand_ack` is low, `dec_mrg2mc_cand_rdy` remains asserted on the selected lane and the packet/transaction remain stable.
 
     Evidence: `src_dec_dev/vc_mvp_dec_mc_adapter.v:34-104`, `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54`.
 
@@ -433,8 +489,8 @@ def make_spec():
 
     This document is aligned by static RTL inspection to baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`.
 
-    - T02 standalone real-Candidate execution remains externally simulator-blocked.
-    - T07 real-Candidate full-pipeline execution remains externally simulator-blocked.
+    - T02 standalone real-Candidate execution is pending execution on a capable VCS host.
+    - T07 real-Candidate full-pipeline execution is pending execution on a capable VCS host.
     - No final Candidate or full-pipeline PASS is claimed.
     - No exact event counts or flush-cycle values are claimed.
     - No runtime B0-over-B2 proof is claimed.
@@ -465,6 +521,10 @@ def make_readme():
 
     The generator derives all output paths from its own repository location and writes only under ref_material/.
 
+    PNG rasterizer fallback
+    -----------------------
+    Generation tries an available Microsoft Edge executable first, then Inkscape discovered through PATH, then CairoSVG when importable. Inkscape receives the SVG input, PNG output path, and requested width and height. If none is available, generation reports the supported rasterizers and stops. Every PNG is checked for a valid signature, nonzero size, and expected dimensions.
+
     Canonical diagram
     -----------------
     ref_material/AVC_Decoder_Only_Data_Flow_v1.svg
@@ -482,7 +542,7 @@ def make_readme():
 
     Verification limitation
     -----------------------
-    The documentation is statically aligned to baseline 3a124096. T02 standalone real-Candidate and T07 real-Candidate full-pipeline execution remain externally simulator-blocked; this documentation does not claim their PASS or closure.
+    The documentation is statically aligned to baseline 3a124096. T02 standalone real-Candidate and T07 real-Candidate full-pipeline execution are pending execution on a capable VCS host; this documentation does not claim their PASS or closure.
     ''').strip() + "\n"
 
 

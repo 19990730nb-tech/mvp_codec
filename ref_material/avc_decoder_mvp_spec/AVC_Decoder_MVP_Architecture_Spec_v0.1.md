@@ -1,6 +1,6 @@
 # AVC Decoder MVP Architecture Spec v0.1
 
-> Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution remain externally simulator-blocked. No final Candidate or full-pipeline PASS is claimed.
+> Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution are pending execution on a capable VCS host. No final Candidate or full-pipeline PASS is claimed.
 
 ## 0. Source of truth and scope
 
@@ -114,7 +114,7 @@ The Decoder MC adapter reuses the existing `mrg2mc` packet shape:
 - `dec_mrg2mc_cand_done` is a registered one-cycle pulse after the accepted handshake.
 - `cur_cu_upd` is generated from `mc_commit` and carries final MV, reference index, and coordinates into rolling Neighbor state.
 
-The packet and transaction remain stable while MC backpressure holds ready low.
+While `mc2mrg_cand_ack` is low, `dec_mrg2mc_cand_rdy` remains asserted on the selected lane and the packet/transaction remain stable.
 
 Evidence: `src_dec_dev/vc_mvp_dec_mc_adapter.v:34-104`, `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54`.
 
@@ -160,8 +160,8 @@ Evidence: `src_dec_dev/vc_mvp_dec_ctrl.v:157-190`, `src_dec_dev/vc_mvp_dec_cand.
 
 This document is aligned by static RTL inspection to baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`.
 
-- T02 standalone real-Candidate execution remains externally simulator-blocked.
-- T07 real-Candidate full-pipeline execution remains externally simulator-blocked.
+- T02 standalone real-Candidate execution is pending execution on a capable VCS host.
+- T07 real-Candidate full-pipeline execution is pending execution on a capable VCS host.
 - No final Candidate or full-pipeline PASS is claimed.
 - No exact event counts or flush-cycle values are claimed.
 - No runtime B0-over-B2 proof is claimed.
