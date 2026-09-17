@@ -249,9 +249,9 @@ def make_fig1():
     parts.append(arrow(1015, 492, 1100, 492))
     parts.append(arrow(1350, 492, 1430, 492))
     parts.append(box(465, 665, 570, 105, ["mc_commit", "cur_cu_upd", "rolling a_0_reg / b_0_reg / buf_reg"], "reuse"))
-    parts.append(polyline([(1555, 580), (1555, 715), (1035, 715)], "feedback"))
+    parts.append(polyline([(1555, 580), (1555, 630), (1035, 630), (1035, 665)], "feedback"))
     parts.append(polyline([(465, 715), (360, 715), (360, 565), (430, 565)], "feedback"))
-    parts.append(note(1120, 700, "MC acknowledgement is the retirement event", "small"))
+    parts.append(note(1290, 615, "rdy & ack -> mc_commit", "small"))
     parts.append(box(1080, 665, 310, 105, ["flush", "cancel downstream pulses", "drain A/B responses"], "flush"))
     return finish_svg(parts), width, height
 
