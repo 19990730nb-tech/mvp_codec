@@ -1,658 +1,508 @@
+from html import escape
+import os
 from pathlib import Path
+import subprocess
 from textwrap import dedent
-import cairosvg
 
-OUT = Path('/mnt/data/avc_decoder_mvp_spec')
-OUT.mkdir(exist_ok=True)
+SPEC_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SPEC_DIR.parent
 
-# ---------- SVG helpers ----------
-def svg_header(w,h,title):
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">
-  <title>{title}</title>
-  <rect x="0" y="0" width="{w}" height="{h}" fill="#ffffff"/>
+
+def svg_header(width, height, title, subtitle=None):
+    subtitle_text = (
+        f'<text x="{width // 2}" y="64" class="subtitle" '
+        f'text-anchor="middle">{escape(subtitle)}</text>'
+        if subtitle else ""
+    )
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <title>{escape(title)}</title>
+  <rect width="100%" height="100%" fill="#ffffff"/>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 z" fill="#263238"/>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#263238"/>
     </marker>
-    <marker id="arrowDash" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 z" fill="#607d8b"/>
+    <marker id="feedbackArrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#1565c0"/>
     </marker>
     <style>
-      .title {{ font: 700 22px Arial, 'Microsoft YaHei', sans-serif; fill:#111; }}
-      .boxTitle {{ font: 700 15px Arial, 'Microsoft YaHei', sans-serif; fill:#111; }}
-      .txt {{ font: 13px Arial, 'Microsoft YaHei', sans-serif; fill:#222; }}
-      .small {{ font: 12px Arial, 'Microsoft YaHei', sans-serif; fill:#333; }}
-      .tiny {{ font: 11px Arial, 'Microsoft YaHei', sans-serif; fill:#444; }}
-      .reuse {{ fill:#eef3f5; stroke:#37474f; stroke-width:1.5; rx:8; }}
-      .new {{ fill:#f7f7f7; stroke:#111; stroke-width:2; rx:8; }}
-      .ext {{ fill:#fff; stroke:#607d8b; stroke-width:1.5; rx:8; }}
-      .bypass {{ fill:#fafafa; stroke:#9e9e9e; stroke-width:1.2; stroke-dasharray:6 5; rx:8; }}
-      .lane {{ fill:#ffffff; stroke:#90a4ae; stroke-width:1; rx:6; }}
-      .arrow {{ fill:none; stroke:#263238; stroke-width:1.8; marker-end:url(#arrow); }}
-      .arrow2 {{ fill:none; stroke:#263238; stroke-width:1.4; marker-end:url(#arrow); }}
-      .dash {{ fill:none; stroke:#607d8b; stroke-width:1.4; stroke-dasharray:6 5; marker-end:url(#arrowDash); }}
-      .feedback {{ fill:none; stroke:#455a64; stroke-width:1.6; marker-end:url(#arrow); }}
+      .title {{ font: 700 26px Arial, sans-serif; fill: #111; }}
+      .subtitle {{ font: 14px Arial, sans-serif; fill: #455a64; }}
+      .box-title {{ font: 700 16px Arial, sans-serif; fill: #111; }}
+      .body {{ font: 14px Arial, sans-serif; fill: #222; }}
+      .small {{ font: 12px Arial, sans-serif; fill: #37474f; }}
+      .tiny {{ font: 11px Arial, sans-serif; fill: #455a64; }}
+      .external {{ fill: #fff; stroke: #607d8b; stroke-width: 1.5; rx: 10; }}
+      .decoder {{ fill: #f5f7f8; stroke: #263238; stroke-width: 2; rx: 10; }}
+      .reuse {{ fill: #e8f1f5; stroke: #1565c0; stroke-width: 1.8; rx: 10; }}
+      .control {{ fill: #f3e5f5; stroke: #6a1b9a; stroke-width: 1.8; rx: 10; }}
+      .flush {{ fill: #fff8e1; stroke: #ef6c00; stroke-width: 1.5; stroke-dasharray: 7 5; rx: 10; }}
+      .disabled {{ fill: #fafafa; stroke: #9e9e9e; stroke-width: 1.2; stroke-dasharray: 6 5; rx: 10; }}
+      .arrow {{ fill: none; stroke: #263238; stroke-width: 2; marker-end: url(#arrow); }}
+      .feedback {{ fill: none; stroke: #1565c0; stroke-width: 1.8; marker-end: url(#feedbackArrow); }}
     </style>
   </defs>
+  <text x="{width // 2}" y="36" class="title" text-anchor="middle">{escape(title)}</text>
+  {subtitle_text}
 '''
 
-def rect(x,y,w,h,cls='reuse'):
-    return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" class="{cls}"/>'
-
-def text(x,y,s,cls='txt',anchor='start'):
-    return f'<text x="{x}" y="{y}" class="{cls}" text-anchor="{anchor}">{s}</text>'
-
-def multiline(x,y,lines,cls='small',dy=17,anchor='middle'):
-    parts=[f'<text x="{x}" y="{y}" class="{cls}" text-anchor="{anchor}">']
-    for i,l in enumerate(lines):
-        parts.append(f'<tspan x="{x}" dy="{0 if i==0 else dy}">{l}</tspan>')
-    parts.append('</text>')
-    return ''.join(parts)
-
-def line(x1,y1,x2,y2,cls='arrow'):
-    return f'<path d="M{x1},{y1} L{x2},{y2}" class="{cls}"/>'
-
-def poly(points, cls='arrow'):
-    d='M'+' L'.join(f'{x},{y}' for x,y in points)
-    return f'<path d="{d}" class="{cls}"/>'
-
-# ---------- Figure 1: overall architecture ----------
-w,h=1600,1040
-s=[svg_header(w,h,'AVC Decoder MVP Overall Architecture')]
-s.append(text(800,38,'AVC Decoder MVP — Proposed Architecture / Data Flow','title','middle'))
-s.append(text(800,62,'solid = decoder active path; dashed = encoder-only / dormant in AVC decode','tiny','middle'))
-
-# external blocks
-s.append(rect(40,110,260,160,'ext'))
-s.append(multiline(170,140,['CCU / Parser / NMU','decoded syntax + context'],'boxTitle',20))
-s.append(multiline(170,190,['mode / cux,cuy / sub_idx','ref_idx_l0 / MVD / skip','A/B availability'],'small',18))
-
-s.append(rect(40,720,260,150,'ext'))
-s.append(multiline(170,750,['MVB SRAM','spatial motion neighbor'],'boxTitle',20))
-s.append(multiline(170,802,['A/B read data','gnt / rd_lat'],'small',18))
-
-s.append(rect(1260,120,285,170,'ext'))
-s.append(multiline(1402,150,['CCU Decoder Inter Path'],'boxTitle',20))
-s.append(multiline(1402,195,['consume final MV/ref_idx','issue MC command','generate cur_cu_upd'],'small',18))
-
-s.append(rect(1260,390,285,120,'ext'))
-s.append(multiline(1402,420,['MC Subsystem'],'boxTitle',20))
-s.append(multiline(1402,462,['motion compensation','decoder prediction'],'small',18))
-
-s.append(rect(1260,720,285,155,'ext'))
-s.append(multiline(1402,750,['NMU / Writeback'],'boxTitle',20))
-s.append(multiline(1402,800,['same-CTU buffer update','row buffer → DMA → MVB'],'small',18))
-
-# decoder blocks
-s.append(rect(360,105,255,175,'new'))
-s.append(multiline(488,136,['DEC_CTRL  [NEW]'],'boxTitle',20))
-s.append(multiline(488,181,['input rendezvous','P16 / P8 S0→S3 scheduler','17-bit command context','no ref traversal'],'small',18))
-
-s.append(rect(350,355,420,340,'reuse'))
-s.append(multiline(560,382,['vc_mvp_get_neib  [REUSE]'],'boxTitle',20))
-# internals
-s.append(rect(380,420,165,86,'lane'))
-s.append(multiline(462,445,['vc_mvp_rd_mem A'],'small',18))
-s.append(multiline(462,480,['req/gnt/rd_lat'],'tiny',16))
-s.append(rect(575,420,165,86,'lane'))
-s.append(multiline(657,445,['vc_mvp_rd_mem B'],'small',18))
-s.append(multiline(657,480,['req/gnt/rd_lat'],'tiny',16))
-s.append(rect(380,535,360,132,'lane'))
-s.append(multiline(560,558,['Neighbor View'],'small',18))
-s.append(multiline(560,590,['mvp_neib_a/b_reg  snapshot','a_0_reg / b_0_reg rolling','buf_reg corner assist'],'tiny',17))
-
-s.append(rect(835,350,300,230,'reuse'))
-s.append(multiline(985,380,['vc_mvp_cand_gen  [REUSE MED]'],'boxTitle',20))
-s.append(multiline(985,426,['A = neib_a[1]','B = neib_b[1]','C = neib_b[0] / b2 fallback','component-wise signed median'],'small',18))
-s.append(text(985,548,'MVP = cand_mv[0][31:0]','small','middle'))
-
-s.append(rect(835,610,300,190,'new'))
-s.append(multiline(985,642,['DEC_RECON  [NEW]'],'boxTitle',20))
-s.append(multiline(985,685,['Inter: final MV = MVP + MVD','P_SKIP: zero-special ? 0 : MVP','carry parsed ref_idx_l0'],'small',19))
-s.append(text(985,770,'result held until downstream accept','tiny','middle'))
-
-# dormant/bypass blocks
-s.append(rect(835,845,300,110,'bypass'))
-s.append(multiline(985,875,['Dormant / bypass in AVC decode'],'small',18))
-s.append(multiline(985,910,['vc_mvp_cand_prior / vc_mvp_scale','Colocated read / FME / ve_mrg_top cost path'],'tiny',16))
-
-# arrows/data labels
-s.append(line(300,190,360,190,'arrow'))
-s.append(text(330,178,'valid/ready','tiny','middle'))
-
-s.append(poly([(488,280),(488,330),(560,330),(560,355)],'arrow'))
-s.append(text(520,320,'neib_start + cmd','tiny','middle'))
-
-s.append(poly([(615,215),(785,215),(785,405),(835,405)],'arrow'))
-s.append(text(720,203,'cand_start + command','tiny','middle'))
-
-s.append(line(770,500,835,500,'arrow'))
-s.append(text(800,487,'A/B neighbor','tiny','middle'))
-
-s.append(line(985,580,985,610,'arrow'))
-s.append(text(1012,600,'MVP','tiny'))
-
-s.append(poly([(615,250),(770,250),(770,700),(835,700)],'arrow'))
-s.append(text(730,238,'MVD / ref_idx / skip','tiny','middle'))
-
-s.append(line(1135,700,1260,205,'arrow'))
-s.append(text(1194,446,'final MV + ref_idx','tiny','middle'))
-
-s.append(line(1402,290,1402,390,'arrow'))
-s.append(text(1430,344,'MC cmd','tiny'))
-
-# feedback cur_cu_upd from CCU to neighbor + NMU
-s.append(poly([(1260,245),(1200,245),(1200,675),(770,675)],'feedback'))
-s.append(text(1085,662,'cur_cu_upd(final MV)','tiny','middle'))
-s.append(line(1402,290,1402,720,'feedback'))
-s.append(text(1435,620,'cur_cu_upd','tiny'))
-
-# MVB read and writeback
-s.append(poly([(300,795),(325,795),(325,475),(350,475)],'arrow'))
-s.append(text(328,665,'A/B read','tiny'))
-s.append(poly([(1260,810),(1170,810),(1170,930),(170,930),(170,870)],'feedback'))
-s.append(text(700,920,'row-end DMA writeback','tiny','middle'))
-
-# show P8 internal dependency note
-s.append(rect(350,735,420,130,'ext'))
-s.append(multiline(560,760,['P8 intra-CU dependency'],'small',18))
-s.append(multiline(560,795,['S0 commit → S1/S2','S1 commit → S2/S3','S2 commit → S3'],'tiny',17))
-s.append(poly([(770,800),(800,800),(800,620),(770,620)],'feedback'))
-s.append(text(805,760,'rolling MV','tiny'))
-
-# architecture note
-s.append(rect(40,915,260,90,'bypass'))
-s.append(multiline(170,942,['Decoder principle'],'small',18))
-s.append(multiline(170,975,['reuse spatial neighbor + MED','remove encoder search / RDO'],'tiny',16))
-
-s.append('</svg>')
-svg1=''.join(s)
-(OUT/'fig1_avc_decoder_mvp_arch.svg').write_text(svg1,encoding='utf-8')
-cairosvg.svg2png(bytestring=svg1.encode(), write_to=str(OUT/'fig1_avc_decoder_mvp_arch.png'), output_width=w, output_height=h)
-
-# ---------- Figure 2: P8 sequence ----------
-w,h=1500,880
-s=[svg_header(w,h,'AVC Decoder P8x8 Transaction and Neighbor Dependency')]
-s.append(text(750,38,'AVC P8×8 — Serial Transaction / Neighbor Dependency','title','middle'))
-s.append(text(750,62,'AVC test condition: reg_tmp_mvp_flag = 0 → no colocated SRAM read','tiny','middle'))
-
-# top source lanes
-s.append(rect(50,100,250,105,'ext'))
-s.append(multiline(175,130,['MVB SRAM → snapshot'],'boxTitle',18))
-s.append(multiline(175,165,['mvp_neib_a_reg','mvp_neib_b_reg'],'small',16))
-s.append(rect(1200,100,250,105,'ext'))
-s.append(multiline(1325,130,['CCU final MV commit'],'boxTitle',18))
-s.append(multiline(1325,165,['cur_cu_upd pulse'],'small',16))
-
-# stages
-xs=[80,430,780,1130]
-labels=['S0 / 8_0','S1 / 8_1','S2 / 8_2','S3 / 8_3']
-reads=['A×2 + B×2 = 4','B×2 = 2','A×2 = 2','SRAM read = 0']
-sources=[
-    ['A: snapshot','B/C/B2: snapshot'],
-    ['A: a_0_reg(S0)','B/C/B2: snapshot'],
-    ['A: snapshot','B: b_0_reg(S0)','C: b_0_reg(S1)','B2: buf/rolling case'],
-    ['A: a_0_reg(S2)','B: b_0_reg(S1)','C/B2: rolling/boundary case']
-]
-for i,x in enumerate(xs):
-    s.append(rect(x,300,280,300,'new'))
-    s.append(text(x+140,332,labels[i],'boxTitle','middle'))
-    s.append(text(x+140,370,reads[i],'small','middle'))
-    yy=415
-    for src in sources[i]:
-        s.append(text(x+28,yy,src,'small'))
-        yy+=28
-    s.append(text(x+140,545,'MED → MVP → +MVD','small','middle'))
-    s.append(text(x+140,575,'final MV','boxTitle','middle'))
-
-# serial arrows
-for i in range(3):
-    s.append(line(xs[i]+280,450,xs[i+1],450,'arrow'))
-    s.append(text((xs[i]+280+xs[i+1])/2,435,'next after commit','tiny','middle'))
-
-# snapshot feeds
-for i,x in enumerate(xs[:3]):
-    s.append(poly([(175,205),(175,250),(x+140,250),(x+140,300)],'arrow2'))
-
-# update loop from each stage to rolling regs band
-s.append(rect(390,680,720,115,'reuse'))
-s.append(multiline(750,710,['IRPU rolling neighbor registers'],'boxTitle',18))
-s.append(multiline(750,748,['a_0_reg / b_0_reg (+ buf_reg corner assist)'],'small',18))
-s.append(text(750,778,'written by cur_cu_upd(final MV), no handshake','tiny','middle'))
-for i,x in enumerate(xs[:3]):
-    s.append(poly([(x+140,600),(x+140,650),(600+i*130,650),(600+i*130,680)],'feedback'))
-
-# rolling feed to later blocks
-s.append(poly([(650,680),(650,640),(570,640),(570,600)],'feedback'))
-s.append(poly([(750,680),(750,630),(920,630),(920,600)],'feedback'))
-s.append(poly([(850,680),(850,620),(1270,620),(1270,600)],'feedback'))
-
-# CCU commit relation
-s.append(poly([(1325,205),(1325,265),(1450,265),(1450,740),(1110,740)],'feedback'))
-s.append(text(1378,253,'commit source','tiny','middle'))
-
-# note
-s.append(rect(50,680,285,115,'bypass'))
-s.append(multiline(192,710,['Important'],'small',18))
-s.append(multiline(192,745,['S0→S1→S2→S3 serial','later blocks consume reconstructed final MV'],'tiny',16))
-
-s.append('</svg>')
-svg2=''.join(s)
-(OUT/'fig2_p8_serial_neighbor_flow.svg').write_text(svg2,encoding='utf-8')
-cairosvg.svg2png(bytestring=svg2.encode(), write_to=str(OUT/'fig2_p8_serial_neighbor_flow.png'), output_width=w, output_height=h)
-
-# ---------- Figure 3: mode derivation ----------
-w,h=1400,760
-s=[svg_header(w,h,'AVC Decoder Motion Vector Derivation')]
-s.append(text(700,38,'AVC Decoder — P16/P8 vs P_SKIP MV Derivation','title','middle'))
-
-s.append(rect(50,110,240,110,'ext'))
-s.append(multiline(170,140,['A/B spatial neighbors'],'boxTitle',18))
-s.append(multiline(170,180,['snapshot + rolling regs'],'small',16))
-
-s.append(rect(380,105,280,180,'reuse'))
-s.append(multiline(520,136,['AVC MED predictor'],'boxTitle',18))
-s.append(multiline(520,178,['A = a1','B = b1','C = b0 / b2 fallback'],'small',18))
-s.append(text(520,250,'MVP','boxTitle','middle'))
-
-s.append(line(290,165,380,165,'arrow'))
-
-# inter branch
-s.append(rect(760,90,260,230,'new'))
-s.append(multiline(890,122,['P16 / P8 Inter'],'boxTitle',18))
-s.append(multiline(890,165,['decoded MVD','signed add'],'small',18))
-s.append(text(890,220,'final MV = MVP + MVD','boxTitle','middle'))
-s.append(text(890,270,'ref_idx_l0 carried separately','small','middle'))
-s.append(line(660,190,760,190,'arrow'))
-
-# skip branch
-s.append(rect(760,405,260,230,'new'))
-s.append(multiline(890,438,['P_SKIP'],'boxTitle',18))
-s.append(multiline(890,480,['zero-motion special rule','else use MED MVP'],'small',18))
-s.append(text(890,535,'final MV = 0 or MVP','boxTitle','middle'))
-s.append(text(890,585,'no decoded MVD','small','middle'))
-s.append(poly([(660,225),(700,225),(700,520),(760,520)],'arrow'))
-
-# output
-s.append(rect(1120,250,230,210,'ext'))
-s.append(multiline(1235,282,['Decoder result'],'boxTitle',18))
-s.append(multiline(1235,326,['final MV','ref_idx_l0','position / size'],'small',18))
-s.append(text(1235,410,'→ CCU → MC','boxTitle','middle'))
-s.append(line(1020,220,1120,305,'arrow'))
-s.append(line(1020,535,1120,405,'arrow'))
-
-# no encoder blocks note
-s.append(rect(50,500,610,135,'bypass'))
-s.append(multiline(355,530,['Not used in decoder MV derivation'],'small',18))
-s.append(multiline(355,568,['IME/FME search · FME SATD · reference traversal · vc_mvp_scale · ve_mrg_top cost/RDO'],'tiny',17))
-
-s.append('</svg>')
-svg3=''.join(s)
-(OUT/'fig3_mode_mv_derivation.svg').write_text(svg3,encoding='utf-8')
-cairosvg.svg2png(bytestring=svg3.encode(), write_to=str(OUT/'fig3_mode_mv_derivation.png'), output_width=w, output_height=h)
-
-# ---------- Markdown spec ----------
-spec = dedent(r'''
-# AVC Decoder MVP Architecture Spec — v0.1
-
-> Status: **architecture draft based on verified encoder RTL + AVC waveform findings already discussed**.  
-> Scope: AVC P16×16, P8×8, P_SKIP motion-vector derivation and neighbor dependency.  
-> Non-goal: HEVC AMVP/Merge decoder, B-slice/List1, encoder RDO/FME.
-
-## 0. Source-of-truth rule
-
-The decoder architecture is derived from the current encoder reference RTL. Old decoder attempts and the previous design-spec document are **not** used as implementation authority.
-
-Primary source files:
-
-- `ve_mvp_top.v`
-- `ve_amvp_top.v`
-- `ve_mrg_top.v`
-- `vc_mvp_ctrl.v`
-- `vc_mvp_get_neib.v`
-- `vc_mvp_rd_mem.v`
-- `vc_mvp_cand_gen.v`
-- `vc_mvp_cand_prior.v`
-- `vc_mvp_scale.v`
-- `sht_mdl.v`
-
-H.264 algorithm reference: Richardson, *The H.264 Advanced Video Compression Standard*, Ch. 6.4.3–6.4.4.
-
----
-
-## 1. Frozen conclusions
-
-### 1.1 Decoder equation
-
-For AVC transmitted Inter partitions:
-
-`final_MV = MVP + decoded_MVD`
-
-For P_SKIP:
-
-`final_MV = 0` when the project RTL zero-motion special condition is true; otherwise `final_MV = MVP`.
-
-The H.264 decoder forms the same predictor MVp as the encoder and adds the decoded MVD; skipped macroblocks have no decoded vector difference and use the derived predictor directly.
-
-### 1.2 AVC predictor
-
-AVC uses the `MED` path in `vc_mvp_cand_gen`:
-
-- A = `neib_a[1]`
-- B = `neib_b[1]`
-- C = `neib_b[0]`, with `neib_b[2]` fallback when B0 is unavailable
-- X/Y are independently signed-median selected
-- no AVC ref-index matching/scaling is used by the MED selector
-- `cand1` is disabled in AVC mode
-
-### 1.3 Temporal candidate
-
-AVC waveform observation: `reg_tmp_mvp_flag == 0` throughout tested AVC encoding.
-
-Static RTL consequence:
-
-- `neib_c_cu_start = cmdq_cu_start & reg_tmp_mvp_flag`
-- Colocated read FSM does not start
-- `col_c_avail` is forced unavailable
-
-Therefore the **AVC decoder core does not require colocated-neighbor fetch**.
-
-### 1.4 P8×8 order
-
-Four 8×8 sub-blocks are serial:
-
-`S0 → S1 → S2 → S3`
-
-Later sub-blocks consume reconstructed final MV from earlier sub-blocks through `a_0_reg / b_0_reg` and boundary `buf_reg` logic.
-
-With `reg_tmp_mvp_flag=0`, normal/maximal spatial SRAM transactions are:
-
-| sub-block | A SRAM | B SRAM | Col SRAM | total |
-|---|---:|---:|---:|---:|
-| S0 / 8_0 | 2 | 2 | 0 | 4 |
-| S1 / 8_1 | 0 | 2 | 0 | 2 |
-| S2 / 8_2 | 2 | 0 | 0 | 2 |
-| S3 / 8_3 | 0 | 0 | 0 | 0 |
-
-Actual A/B reads can be further reduced by availability/boundary conditions.
-
----
-
-## 2. Encoder RTL evidence table
 
-| Conclusion | RTL evidence |
-|---|---|
-| Top hierarchy is AMVP + Merge + shared Neighbor | `ve_mvp_top.v:265-358` (`ve_mrg_top`), `360-434` (`ve_amvp_top`), `437-519` (`vc_mvp_get_neib`) |
-| `vc_mvp_ctrl` command payload is 14 bit | `vc_mvp_ctrl.v:106-119` |
-| AMVP command queue excludes skip | `vc_mvp_ctrl.v:130` |
-| Encoder controller traverses active L0 ref indices | `vc_mvp_ctrl.v:408-442` |
-| `ve_amvp_top` turns 14-bit command into 17-bit `{blk_sz,cmd}` | `ve_amvp_top.v:197-200` |
-| FME result is carried separately into CCU | `ve_amvp_top.v:225-231` |
-| Encoder computes `MVD = final_MV - MVP` | `ve_amvp_top.v:258-278` |
-| AVC bridge uses blk16 only | `ve_amvp_top.v:351-359`; `ve_mrg_top.v:401-404` |
-| A/B request-return alignment uses request-info FIFO | `vc_mvp_rd_mem.v:81-90` |
-| blk8 A/B read counts are determined by cux/cuy parity | `vc_mvp_get_neib.v:381-390` |
-| Col read is gated by `reg_tmp_mvp_flag` | `vc_mvp_get_neib.v:393-399`, `419-427` |
-| SRAM read data is snapshotted into `mvp_neib_*_reg` | `vc_mvp_get_neib.v:1025-1030` and corresponding A block |
-| blk8 A mux uses `a_0_reg` on right-half blocks | `vc_mvp_get_neib.v:696-715` |
-| blk8 B/C/B2 mux uses `b_0_reg / buf_reg` for lower-row/boundary cases | `vc_mvp_get_neib.v:717-813` |
-| `cur_cu_upd` writes reconstructed motion info into rolling regs | `vc_mvp_get_neib.v:993-1015` |
-| MED input fields come from command availability | `vc_mvp_cand_gen.v:203-210` |
-| MED candidate output is candidate-0 | `vc_mvp_cand_gen.v:329-341` |
-| signed component-wise AVC median | `vc_mvp_cand_gen.v:402-445` |
-| AVC selection goes to MED and disables candidate-1 | `vc_mvp_cand_gen.v:1214-1220`, `1329` |
-| ref/POC matching belongs to general AMVP priority logic | `vc_mvp_cand_prior.v:76-100` |
-| temporal priority/scaling is gated by `reg_tmp_mvp_flag` | `vc_mvp_cand_prior.v:110-121` |
-
----
-
-## 3. Proposed decoder module architecture
-
-![Overall architecture](fig1_avc_decoder_mvp_arch.svg)
-
-### 3.1 `DEC_CTRL` — new decoder scheduler
-
-Purpose: replace encoder-only scheduling behavior of `vc_mvp_ctrl` without changing the proven encoder controller.
-
-Inputs:
-
-- decoder transaction valid
-- `part_mode`: P16×16 / P8×8
-- `sub_idx` for P8×8
-- `cux/cuy`
-- A/B availability from CCU/NMU
-- `ref_idx_l0`
-- signed `mvd_x/mvd_y`
-- `is_skip`
-
-Responsibilities:
-
-1. accept one decoded partition transaction only when local transaction storage is available;
-2. form the same spatial command context consumed by Neighbor/Candidate logic;
-3. P16: one transaction;
-4. P8: enforce `S0→S1→S2→S3` ordering;
-5. start neighbor fetch;
-6. wait for `neib_done` before starting MED candidate generation;
-7. **do not** traverse reference indices;
-8. hold syntax payload until final-MV result is committed downstream.
-
-Recommended internal command representation:
-
-`{blk_sz[2:0], term, skip, zmv, a_avail[1:0], b_avail[2:0], cuy[2:0], cux[2:0]}`
-
-The lower 14 bits intentionally match encoder `cu_cmd_out`; decoder-only `MVD/ref_idx/sub_idx` remain a separate payload and should not be packed into that legacy command.
-
-### 3.2 `vc_mvp_get_neib` — reuse spatial Neighbor Manager
-
-Reuse:
-
-- A/B `vc_mvp_rd_mem`
-- request/gnt/rd_lat alignment
-- `mvp_neib_a_reg / mvp_neib_b_reg` snapshot registers
-- `a_0_reg / b_0_reg` rolling registers
-- `buf_reg` boundary/corner special handling
-- `get_rd_neib_a/b()` and `get_neib_a/b()` mapping rules
-
-AVC decode policy:
-
-- `reg_tmp_mvp_flag = 0`
-- colocated path stays idle
-- RefList data is not consumed by the MED datapath; first implementation may leave the existing RefList engine structurally present to minimize RTL disturbance, then optionally gate it in a later cleanup task
-
-### 3.3 `vc_mvp_cand_gen` — reuse only AVC MED behavior
-
-Recommended first implementation: reuse the existing module with `AMVP_OR_MRG=1`, `reg_avc_mode=1` and consume only candidate-0 MVP.
-
-This intentionally leaves `vc_mvp_cand_prior` and `vc_mvp_scale` instantiated but functionally irrelevant to the AVC MED result. This is safer for the first decoder implementation than extracting/re-writing the median logic immediately.
-
-Decoder-consumed output:
-
-`mvp_x = cand_mv[0][15:0]`
-
-`mvp_y = cand_mv[0][31:16]`
-
-Do not use candidate embedded `ref_idx` as the decoded reference index. The current partition's `ref_idx_l0` comes from the decoded syntax payload and is carried separately.
-
-### 3.4 `DEC_RECON` — new final-MV reconstruction
-
-Inter P16/P8:
-
-`final_mvx = signed(mvp_x) + signed(mvd_x)`
-
-`final_mvy = signed(mvp_y) + signed(mvd_y)`
-
-P_SKIP:
-
-- obtain the same blk16 MED predictor;
-- apply project zero-motion rule equivalent to encoder `ve_amvp_top.v:357-359`;
-- no FME, no decoded MVD;
-- output `0` or median MVP directly as final MV.
-
-![Mode derivation](fig3_mode_mv_derivation.svg)
-
-### 3.5 Decoder result boundary
-
-The MVP decoder core outputs a reconstructed motion transaction:
-
-- final MVX/MVY
-- parsed `ref_idx_l0`
-- block size / position / sub-index
-- skip/inter mode
-
-The exact binding to CCU's decoder-side ports is intentionally a wrapper-level contract. The architectural requirement is:
-
-- result must remain stable until downstream accepts it;
-- CCU uses the accepted final MV to issue MC;
-- CCU then emits `cur_cu_upd` commit with the same reconstructed motion information.
-
-This keeps the existing ownership model: **CCU owns MC scheduling and `cur_cu_upd`; MVP owns predictor/reconstruction.**
-
----
-
-## 4. P8×8 neighbor/data-flow detail
-
-![P8 sequence](fig2_p8_serial_neighbor_flow.svg)
-
-### 4.1 Source-class mapping
-
-| sub-block | A | B | C (spatial) | B2 fallback |
-|---|---|---|---|---|
-| S0 | SRAM snapshot | SRAM snapshot | SRAM snapshot | SRAM snapshot / boundary rule |
-| S1 | `a_0_reg` from S0 | SRAM snapshot | SRAM snapshot | SRAM snapshot / boundary rule |
-| S2 | SRAM snapshot | `b_0_reg` from S0 | `b_0_reg` from S1 | `buf_reg` / rolling special case |
-| S3 | `a_0_reg` from S2 | `b_0_reg` from S1 | rolling/boundary case | rolling/boundary case |
-
-Exact index selection remains the existing `get_neib_a()` / `get_neib_b()` RTL; decoder must **reuse the function behavior rather than re-derive it from a simplified geometry table**.
-
-### 4.2 Commit dependency
-
-`cur_cu_upd` is not a ready/valid transaction. It is a commit pulse carrying stable reconstructed motion information.
-
-For P8, later sub-block candidate generation must not begin before the required prior sub-block commit has updated `a_0_reg/b_0_reg`.
-
----
-
-## 5. Motion-neighbor persistence loop
-
-The reconstructed final MV participates in three storage horizons:
-
-1. **intra-current-CU rolling state**: `a_0_reg/b_0_reg` in `vc_mvp_get_neib`;
-2. **same-CTU NMU buffers**: immediate `cur_cu_upd` update in upstream NMU;
-3. **cross-row MVB SRAM persistence**: upstream row buffer accumulates CU updates and DMA-writes MVB at row/CTU boundary.
-
-Decoder MVP must not directly implement MVB write arbitration. It only needs to ensure the final reconstructed motion is returned so CCU can issue the established `cur_cu_upd` commit.
-
----
-
-## 6. Encoder-only logic explicitly excluded from AVC decoder core
-
-- FME/IME motion search
-- FME SATD/min-position logic
-- encoder `MVD = final_MV - MVP`
-- `vc_mvp_ctrl` reference-index traversal
-- HEVC candidate-0/candidate-1 cost selection
-- AVC `avc_mvp_push → ve_mrg_top → MC cost` encoder mode-decision path
-- Merge RDO/cost comparison
-- colocated temporal candidate
-- temporal/spatial MV scaling for AVC MED
-
-`ve_mrg_top` remains encoder-side logic. P_SKIP decoder reconstruction is performed directly from the MED predictor and zero-motion rule; it does not need the encoder Merge-cost subsystem.
-
----
-
-## 7. Reuse / modify / new matrix
-
-| RTL block | Decoder action | Reason |
-|---|---|---|
-| `ve_mvp_top` | integration change only | route `codec_mode`, selected control, neighbor/result boundary |
-| `ve_amvp_top` | keep encoder path untouched | contains FME FIFO, MVD-cost and encoder queues |
-| `vc_mvp_ctrl` | **do not reuse as decoder scheduler** | skip filter + ref traversal are encoder behavior |
-| new `DEC_CTRL` | **new** | parsed syntax drives one exact partition transaction |
-| `vc_mvp_get_neib` | **reuse** | spatial fetch/snapshot/rolling behavior is required |
-| `vc_mvp_rd_mem` A/B | **reuse** | proven SRAM request-return alignment |
-| Col `vc_mvp_rd_mem` | dormant | AVC tested with `reg_tmp_mvp_flag=0` |
-| RefList `vc_mvp_rd_mem` | not consumed by MED | leave structurally present first; optional later gate |
-| `vc_mvp_cand_gen` | **reuse MED branch** | bit-exact predictor source |
-| `vc_mvp_cand_prior` | present but bypassed for MED | ref matching/scaling not used by AVC MED selector |
-| `vc_mvp_scale` | present but bypassed | AVC MED does not use it |
-| new `DEC_RECON` | **new** | `MVP+MVD` / P_SKIP final MV |
-| `ve_mrg_top` | bypass decoder | encoder skip/inter RDO cost path only |
-| `sht_mdl` | optional reuse | input/result elasticity if explicit FIFO is selected |
-
----
-
-## 8. Control sequence
-
-### 8.1 P16×16 Inter
-
-1. CCU/parser presents decoded P16 transaction.
-2. `DEC_CTRL` accepts and latches MVD/ref_idx/context.
-3. Start A/B Neighbor fetch.
-4. Wait `neib_done`.
-5. Start AVC MED candidate generation.
-6. Obtain MVP.
-7. `DEC_RECON`: `final_MV = MVP + MVD`.
-8. Return final-MV transaction to CCU.
-9. CCU issues MC and `cur_cu_upd` commit.
-
-### 8.2 P8×8 Inter
-
-Repeat the P16 flow once per `S0/S1/S2/S3`, but enforce serial ordering and wait for the prior sub-block's `cur_cu_upd` dependency before starting a sub-block that consumes its rolling neighbor.
-
-### 8.3 P_SKIP
-
-1. accept skip transaction;
-2. use blk16 spatial Neighbor View;
-3. generate MED;
-4. apply zero-motion special rule;
-5. return final skip MV directly; no MVD reconstruction and no FME.
-
----
-
-## 9. Luna implementation task boundaries
-
-The following split is ready to be converted into strict Codex task packets after interface names are frozen:
-
-| Task | Scope | Main files |
-|---|---|---|
-| T00 | decoder top-level transaction contract / `codec_mode` routing | MVP top wrapper only |
-| T01 | `DEC_CTRL`: P16 command + input rendezvous | new decoder control file |
-| T02 | shared Neighbor integration for decoder; Col disabled | top + `vc_mvp_get_neib` wiring only |
-| T03 | MED reuse path and decoder MVP extraction | decoder top + `vc_mvp_cand_gen` interface |
-| T04 | signed `MVP+MVD` reconstruction | new reconstruction block |
-| T05 | P_SKIP zero-motion + MED reconstruction | decoder reconstruction/control |
-| T06 | P8 `S0→S3` scheduler and dependency checks | decoder control |
-| T07 | `cur_cu_upd` rolling-neighbor closure | decoder/top integration + existing get_neib ports |
-| T08 | result holding/backpressure and CCU binding | decoder top / CCU interface |
-| T09 | assertions + directed P16/P8/P_SKIP tests | verification only |
-
-Hard rule for Luna: each task may modify only the files explicitly named in that task packet; no architecture redesign and no opportunistic cleanup.
-
----
-
-## 10. Items not yet frozen
-
-These are intentionally left open rather than guessed:
-
-1. exact decoder result bus binding inside CCU (`existing AMVP-like interface` vs dedicated decoder result channel);
-2. exact signed overflow/wrap rule for 16-bit final MV at the implementation boundary;
-3. whether first implementation should gate the unused RefList read engine in decoder mode or leave it harmlessly present;
-4. exact upstream signal name that converts decoded parser syntax to the proposed decoder transaction.
-
-These four items should be resolved before Luna receives T00/T04/T08, but they do not change the core Neighbor → MED → reconstruction architecture above.
-''').strip()+"\n"
-
-(OUT/'AVC_Decoder_MVP_Architecture_Spec_v0.1.md').write_text(spec, encoding='utf-8')
-
-# simple index
-index=dedent('''
-AVC Decoder MVP Architecture Spec v0.1
-
-Files:
-- AVC_Decoder_MVP_Architecture_Spec_v0.1.md
-- fig1_avc_decoder_mvp_arch.svg / .png
-- fig2_p8_serial_neighbor_flow.svg / .png
-- fig3_mode_mv_derivation.svg / .png
-''').strip()+"\n"
-(OUT/'README.txt').write_text(index,encoding='utf-8')
-print('generated', OUT)
+def box(x, y, width, height, lines, style="decoder", title=True):
+    result = [f'<rect x="{x}" y="{y}" width="{width}" height="{height}" class="{style}"/>']
+    start = y + 30
+    for index, value in enumerate(lines):
+        cls = "box-title" if title and index == 0 else "body"
+        result.append(
+            f'<text x="{x + width / 2}" y="{start + index * 22}" class="{cls}" '
+            f'text-anchor="middle">{escape(value)}</text>'
+        )
+    return "".join(result)
+
+
+def note(x, y, value, cls="small", anchor="middle"):
+    return f'<text x="{x}" y="{y}" class="{cls}" text-anchor="{anchor}">{escape(value)}</text>'
+
+
+def arrow(x1, y1, x2, y2, style="arrow"):
+    return f'<path d="M{x1},{y1} L{x2},{y2}" class="{style}"/>'
+
+
+def polyline(points, style="arrow"):
+    path = "M" + " L".join(f"{x},{y}" for x, y in points)
+    return f'<path d="{path}" class="{style}"/>'
+
+
+def finish_svg(parts):
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def write_pair(relative_stem, svg, width, height):
+    svg_path = ROOT_DIR / f"{relative_stem}.svg"
+    png_path = ROOT_DIR / f"{relative_stem}.png"
+    svg_path.write_text(svg, encoding="utf-8", newline="\n")
+    render_png(svg_path, png_path, width, height)
+
+
+def render_png(svg_path, png_path, width, height):
+    candidates = [
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Edge/Application/msedge.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/Edge/Application/msedge.exe",
+    ]
+    edge = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if edge is None:
+        raise RuntimeError("Microsoft Edge is required to rasterize generated SVG files")
+    subprocess.run([
+        str(edge),
+        "--headless",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--run-all-compositor-stages-before-draw",
+        "--virtual-time-budget=1000",
+        f"--window-size={width},{height}",
+        f"--screenshot={png_path}",
+        svg_path.as_uri(),
+    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if not png_path.is_file() or png_path.stat().st_size == 0:
+        raise RuntimeError(f"SVG rasterizer did not create {png_path}")
+
+
+def make_root_diagram():
+    width, height = 1900, 1040
+    parts = [svg_header(
+        width,
+        height,
+        "AVC Decoder MVP Canonical Data Flow",
+        "Implemented ownership and transaction flow; blue arrows are commit or rolling-neighbor feedback",
+    )]
+
+    blocks = [
+        (35, 150, 210, 145, ["Decoded syntax", "mode / coordinates", "A/B availability", "MVD / ref_idx / skip"], "external"),
+        (285, 150, 220, 145, ["vc_mvp_dec_ctrl", "accept and latch", "DEC_NEIB to DEC_SEND", "P8 order tracking"], "control"),
+        (545, 150, 255, 180, ["vc_mvp_dec_neib_top", "vc_mvp_dec_neib_adapter", "real Neighbor hierarchy", "A/B snapshot and drain"], "reuse"),
+        (840, 150, 255, 180, ["vc_mvp_dec_cand", "real vc_mvp_cand_gen", "A=A1  B=B1", "C=B0 then B2", "candidate0 only"], "reuse"),
+        (1115, 150, 245, 180, ["vc_mvp_dec_recon", "signed 17-bit add", "P_SKIP zero rule", "final MV and ref_idx"], "decoder"),
+        (1380, 150, 255, 180, ["vc_mvp_dec_mc_adapter", "lane and packet select", "held-valid backpressure", "dec_send"], "decoder"),
+        (1665, 150, 200, 145, ["mrg2mc interface", "MC acknowledgement", "mc_commit"], "external"),
+    ]
+    for x, y, w, h, labels, style in blocks:
+        parts.append(box(x, y, w, h, labels, style))
+
+    for x1, x2, label in [
+        (245, 285, "accepted"),
+        (505, 545, "neib_start"),
+        (800, 840, "capture"),
+        (1095, 1115, "MVP"),
+        (1360, 1380, "DEC_SEND"),
+        (1635, 1665, "packet"),
+    ]:
+        parts.append(arrow(x1, 220, x2, 220))
+        parts.append(note((x1 + x2) / 2, 205, label, "tiny"))
+
+    parts.append(box(585, 390, 685, 110, [
+        "vc_mvp_dec_upd_adapter",
+        "cur_cu_upd = mc_commit",
+        "committed final MV / ref_idx / coordinates",
+    ], "reuse"))
+    parts.append(polyline([(1765, 295), (1765, 430), (1270, 430)], "feedback"))
+    parts.append(note(1570, 414, "acknowledged transaction retires once", "small"))
+    parts.append(arrow(1665, 265, 1270, 430, "feedback"))
+    parts.append(polyline([(585, 445), (470, 445), (470, 565), (675, 565), (675, 500)], "feedback"))
+    parts.append(note(525, 552, "rolling Neighbor state", "small"))
+
+    parts.append(box(35, 620, 1815, 125, [
+        "P8 serial dependency",
+        "S0 -> MC commit/update -> S1 -> MC commit/update -> S2 -> MC commit/update -> S3",
+        "next expected sub-index advances only after the preceding mc_commit",
+    ], "reuse"))
+
+    parts.append(box(35, 800, 1815, 125, [
+        "Flush and drain barrier",
+        "slice or mode cancellation suppresses Candidate, reconstruction, MC, and update activity",
+        "physical A/B outstanding reads drain before Neighbor ready or qualified completion reopens",
+    ], "flush"))
+    parts.append(note(950, 970, "Phase 1: P16x16, P8x8, P_SKIP; List0 and ref_idx 0; temporal/Col, scaling, and RefList traversal inactive", "small"))
+    return finish_svg(parts), width, height
+
+
+def make_fig1():
+    width, height = 1750, 860
+    parts = [svg_header(
+        width,
+        height,
+        "AVC Decoder MVP Hierarchy and Ownership",
+        "The Decoder owns admission through MC retirement; reused Neighbor and Candidate logic remain explicit",
+    )]
+    parts.append(box(70, 125, 280, 170, ["vc_mvp_dec_top", "top-level Decoder", "backend and Candidate"], "control"))
+    parts.append(box(430, 110, 300, 200, ["vc_mvp_dec_backend_top", "Neighbor top", "reconstruction", "MC adapter", "update adapter"], "decoder"))
+    parts.append(box(810, 110, 300, 200, ["vc_mvp_dec_neib_top", "vc_mvp_dec_ctrl", "neib_adapter", "real vc_mvp_get_neib", "dec_upd_adapter"], "reuse"))
+    parts.append(box(1190, 110, 250, 200, ["vc_mvp_dec_cand", "real vc_mvp_cand_gen", "AVC MED", "candidate0"], "reuse"))
+    parts.append(arrow(350, 210, 430, 210))
+    parts.append(arrow(730, 210, 810, 210))
+    parts.append(polyline([(210, 295), (210, 345), (1315, 345), (1315, 310)], "arrow"))
+
+    parts.append(box(85, 420, 260, 145, ["accepted syntax", "latched transaction", "MVD / ref_idx / mode"], "external"))
+    parts.append(box(430, 405, 250, 175, ["DEC_NEIB", "A/B read and snapshot", "qualified Neighbor done"], "reuse"))
+    parts.append(box(765, 405, 250, 175, ["Candidate capture", "spatial MVP", "cand_capture_done"], "reuse"))
+    parts.append(box(1100, 405, 250, 175, ["reconstruction", "final MV", "dec_recon_start / done"], "decoder"))
+    parts.append(box(1430, 405, 250, 175, ["DEC_SEND", "mrg2mc packet", "MC acknowledgement"], "decoder"))
+    parts.append(arrow(345, 492, 430, 492))
+    parts.append(arrow(680, 492, 765, 492))
+    parts.append(arrow(1015, 492, 1100, 492))
+    parts.append(arrow(1350, 492, 1430, 492))
+    parts.append(box(465, 665, 570, 105, ["mc_commit", "cur_cu_upd", "rolling a_0_reg / b_0_reg / buf_reg"], "reuse"))
+    parts.append(polyline([(1555, 580), (1555, 715), (1035, 715)], "feedback"))
+    parts.append(polyline([(465, 715), (360, 715), (360, 565), (430, 565)], "feedback"))
+    parts.append(note(1120, 700, "MC acknowledgement is the retirement event", "small"))
+    parts.append(box(1080, 665, 310, 105, ["flush", "cancel downstream pulses", "drain A/B responses"], "flush"))
+    return finish_svg(parts), width, height
+
+
+def make_fig2():
+    width, height = 1600, 900
+    parts = [svg_header(
+        width,
+        height,
+        "AVC P8x8 Serial Neighbor and Commit Flow",
+        "Each later sub-block waits for the preceding MC commit and rolling-neighbor update",
+    )]
+    xs = [55, 435, 815, 1195]
+    names = ["S0", "S1", "S2", "S3"]
+    source = [
+        ["A/B SRAM snapshot", "C uses B0/B2"],
+        ["A from a_0_reg", "B/C Neighbor view"],
+        ["A Neighbor view", "B/C rolling state"],
+        ["A/B/C rolling view", "boundary handling"],
+    ]
+    for x, name, labels in zip(xs, names, source):
+        parts.append(box(x, 180, 300, 210, [name, "Neighbor acquisition", *labels, "Candidate0 -> recon"], "reuse"))
+    for i in range(3):
+        parts.append(arrow(xs[i] + 300, 285, xs[i + 1], 285))
+        parts.append(note((xs[i] + 300 + xs[i + 1]) / 2, 270, "after mc_commit", "tiny"))
+
+    parts.append(box(125, 500, 1350, 120, [
+        "MC adapter",
+        "P8 lane 0, mask 3'b001, size code 1; packet held until mc2mrg_cand_ack",
+        "mc_commit = |(rdy & ack); dec_mrg2mc_cand_done is a registered one-cycle pulse",
+    ], "decoder"))
+    for x in [205, 585, 965, 1345]:
+        parts.append(polyline([(x, 390), (x, 470), (x, 500)], "arrow"))
+    parts.append(box(280, 700, 1040, 95, [
+        "cur_cu_upd from mc_commit",
+        "rolling a_0_reg / b_0_reg / buf_reg become visible to the next required Neighbor lookup",
+    ], "reuse"))
+    parts.append(polyline([(800, 620), (800, 700)], "feedback"))
+    parts.append(box(60, 825, 1480, 50, [
+        "flush: cancel current transaction; A/B physical read counters remain until rd_lat drain; ready and qualified Neighbor done reopen only when quiescent",
+    ], "flush"))
+    return finish_svg(parts), width, height
+
+
+def make_fig3():
+    width, height = 1600, 980
+    parts = [svg_header(
+        width,
+        height,
+        "AVC Candidate, P_SKIP, Reconstruction, and MC Mapping",
+        "Phase-1 AVC uses candidate0, signed component arithmetic, and the reused mrg2mc packet interface",
+    )]
+    parts.append(box(45, 135, 300, 200, ["Neighbor candidates", "A = A1", "B = B1", "C = B0 then B2", "A0 masked"], "reuse"))
+    parts.append(box(460, 105, 350, 255, ["AVC candidate0", "none -> zero", "one operand -> that operand", "otherwise signed MED", "candidate1 disabled"], "reuse"))
+    parts.append(arrow(345, 235, 460, 235))
+
+    parts.append(box(930, 105, 300, 255, ["Normal Inter", "MVP X/Y + MVD X/Y", "explicit signed 17-bit", "low 16 bits retained", "final MV = {Y, X}"], "decoder"))
+    parts.append(arrow(810, 235, 930, 235))
+    parts.append(box(1270, 105, 285, 255, ["P16 / P8 MC", "P16 lane 1", "P8 lane 0", "P_SKIP lane 1", "lane 2 unused"], "decoder"))
+    parts.append(arrow(1230, 235, 1270, 235))
+
+    parts.append(box(460, 470, 350, 255, ["P_SKIP", "top16 or left16", "or available A1/B1 is zero", "true -> final MV zero", "false -> spatial MVP", "MVD ignored; ref_idx 0"], "decoder"))
+    parts.append(polyline([(610, 360), (610, 470)], "arrow"))
+    parts.append(box(930, 470, 300, 255, ["Packet", "valid + picture coordinates", "two size fields", "ref_idx + final MV", "stable while backpressured"], "decoder"))
+    parts.append(arrow(810, 600, 930, 600))
+    parts.append(box(1270, 470, 285, 255, ["Retirement", "MC acknowledgement", "mc_commit", "registered done pulse", "cur_cu_upd"], "reuse"))
+    parts.append(arrow(1230, 600, 1270, 600))
+
+    parts.append(box(80, 820, 1475, 70, [
+        "Phase-1 tie-offs: NUM_REF=1, Candidate-side cur_ref_idx=0, sanitized Neighbor ref fields, temporal/Col and scaling inactive, RefList traversal inactive",
+    ], "disabled"))
+    return finish_svg(parts), width, height
+
+
+def make_spec():
+    return dedent('''
+    # AVC Decoder MVP Architecture Spec v0.1
+
+    > Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution remain externally simulator-blocked. No final Candidate or full-pipeline PASS is claimed.
+
+    ## 0. Source of truth and scope
+
+    `ref_material/avc_decoder_mvp_spec/gen_spec.py` is the reproducible source of truth for this Markdown file, the canonical root diagram, and the three detailed figure pairs. It writes only beneath `ref_material/`.
+
+    The executable hierarchy is the authority:
+
+    ```text
+    vc_mvp_dec_top
+    +- vc_mvp_dec_backend_top
+       +- vc_mvp_dec_neib_top
+       |  +- vc_mvp_dec_ctrl
+       |  +- vc_mvp_dec_neib_adapter
+       |  +- real vc_mvp_get_neib hierarchy
+       |  `- vc_mvp_dec_upd_adapter
+       +- vc_mvp_dec_recon
+       +- vc_mvp_dec_mc_adapter
+    `- vc_mvp_dec_cand
+       `- real vc_mvp_cand_gen
+    ```
+
+    Phase 1 supports P16x16, P8x8, and P_SKIP; List0 with one active reference and legal `ref_idx=0`. List1, temporal and Col candidates, reference traversal, scaling, encoder search, and cost selection are inactive.
+
+    ## 1. Canonical transaction flow
+
+    ```text
+    accepted decoded syntax
+      -> DEC_NEIB
+      -> real Neighbor result
+      -> Candidate capture
+      -> reconstruction
+      -> DEC_SEND
+      -> decoder MC adapter
+      -> reused mrg2mc interface
+      -> MC acknowledgement
+      -> mc_commit
+      -> cur_cu_upd
+      -> rolling Neighbor state
+    ```
+
+    `vc_mvp_dec_ctrl` owns the Decoder transaction state. The final MV is emitted directly by the Decoder MC adapter through the reused `mrg2mc` branch. The acknowledgement is `mc2mrg_cand_ack`; retirement is `mc_commit`; `dec_mrg2mc_cand_done` is the registered one-cycle completion pulse toward MC; `cur_cu_upd` is generated from the same accepted handshake.
+
+    ## 2. Candidate behavior
+
+    The real `vc_mvp_cand_gen` AVC MED path is wrapped by `vc_mvp_dec_cand`.
+
+    - A = A1 = `neib_a[1]`.
+    - B = B1 = `neib_b[1]`.
+    - C = B0 when available, otherwise B2.
+    - A0 is masked by `vc_mvp_dec_cand`.
+    - B0 has priority when B0 and B2 are both available.
+    - Candidate0 is consumed; Candidate1 is disabled.
+
+    | Available operands | Candidate-0 result |
+    |---|---|
+    | none | zero |
+    | A only | A1 |
+    | B only | B1 |
+    | C only | B0, otherwise B2 fallback |
+    | A+B | signed component-wise MED(A, B, 0) |
+    | A+C | signed component-wise MED(A, 0, C) |
+    | B+C | signed component-wise MED(0, B, C) |
+    | A+B+C | signed component-wise MED(A, B, C) |
+
+    Candidate data is combinational during the accepted start/IDLE cycle. `vc_mvp_dec_cand` captures candidate0 on the launch edge and reports `cand_capture_done` as the handoff event. Legacy Candidate-generator `cand_blk_done` is not the Decoder data-valid event.
+
+    Phase-1 inputs are deterministic: `NUM_REF=1`, Candidate-side `cur_ref_idx=0`, Neighbor reference fields sanitized to zero, temporal/Col and scaling paths disabled, and legal decoded reference index zero. The legacy reference-index field remains structurally present but is not used for Phase-1 traversal or remapping.
+
+    Evidence: `src_dec_dev/vc_mvp_dec_cand.v:31-116`, `src_encoder_ref/vc_mvp_cand_gen.v:203-215`, `src_encoder_ref/vc_mvp_cand_gen.v:411-445`, `src_encoder_ref/vc_mvp_cand_gen.v:1211-1224`, `src_encoder_ref/vc_mvp_cand_gen.v:1329-1330`.
+
+    ## 3. Reconstruction and P_SKIP
+
+    For normal Inter, MVP X/Y and MVD X/Y are interpreted as signed 16-bit two's-complement components. Each operand is explicitly sign-extended to signed 17 bits, added independently, and retained as the low 16 bits:
+
+    ```text
+    MVP X/Y + MVD X/Y
+      -> signed 17-bit component-wise addition
+      -> sum_x[15:0] and sum_y[15:0]
+      -> final MV = {sum_y[15:0], sum_x[15:0]}
+    ```
+
+    This is low-bit modulo retention, not saturation. Out-of-range sums produce simulation-only diagnostics; no recovery output is exposed.
+
+    The implemented P_SKIP condition is:
+
+    ```text
+    skip_zero_motion =
+        picture_top16
+     || picture_left16
+     || (B1 available && B1 MV == 0)
+     || (A1 available && A1 MV == 0)
+    ```
+
+    When true, final MV is zero. Otherwise final MV is the spatial MVP. P_SKIP final `ref_idx` is zero and MVD is ignored. Picture-boundary flags are derived from accepted and latched CTU/CU coordinates, not live upstream coordinates.
+
+    Evidence: `src_dec_dev/vc_mvp_dec_recon.v:23-83`, `src_dec_dev/vc_mvp_dec_neib_top.v:249-252`.
+
+    ![Mode, Candidate, reconstruction, and MC mapping](fig3_mode_mv_derivation.svg)
+
+    ## 4. MC interface and commit ownership
+
+    The Decoder MC adapter reuses the existing `mrg2mc` packet shape:
+
+    - P8 selects lane 0 with mask `3'b001` and size code 1.
+    - P16 and P_SKIP select lane 1 with mask `3'b010` and size code 2.
+    - Lane 2 is unused.
+    - `dec_mrg2mc_cand_nb = 0`.
+    - The packet contains valid, picture coordinates, two size fields, reference index, and final MV.
+    - `mc2mrg_cand_ack` is the MC acknowledgement input.
+    - `mc_commit = |(rdy & ack)` is the architectural retirement event.
+    - `dec_mrg2mc_cand_done` is a registered one-cycle pulse after the accepted handshake.
+    - `cur_cu_upd` is generated from `mc_commit` and carries final MV, reference index, and coordinates into rolling Neighbor state.
+
+    The packet and transaction remain stable while MC backpressure holds ready low.
+
+    Evidence: `src_dec_dev/vc_mvp_dec_mc_adapter.v:34-104`, `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54`.
+
+    ## 5. P8 ordering and Neighbor persistence
+
+    ```text
+    S0 -> MC commit/update
+       -> S1 -> MC commit/update
+            -> S2 -> MC commit/update
+                 -> S3 -> MC commit/update
+    ```
+
+    The next expected P8 sub-index advances only after the preceding sub-block's `mc_commit`. The resulting `cur_cu_upd` updates the rolling Neighbor state used by later sub-blocks.
+
+    ![P8 serial Neighbor flow](fig2_p8_serial_neighbor_flow.svg)
+
+    Evidence: `src_dec_dev/vc_mvp_dec_ctrl.v:226-233`, `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54`, `src_encoder_ref/vc_mvp_get_neib.v:994-1015`.
+
+    ## 6. Flush and drain behavior
+
+    Slice or mode cancellation is synchronous in the controller, Candidate wrapper, reconstruction block, and MC adapter. MC output is immediately suppressed during flush. A stale MC acknowledgement cannot retire cancelled work.
+
+    Neighbor integration tracks physical accepted-but-not-yet-returned A/B reads. Those outstanding counters survive Decoder flush until `rd_lat` responses drain. External ready and qualified Neighbor completion remain blocked until both directions are quiescent.
+
+    Evidence: `src_dec_dev/vc_mvp_dec_ctrl.v:157-190`, `src_dec_dev/vc_mvp_dec_cand.v:83-116`, `src_dec_dev/vc_mvp_dec_recon.v:50-83`, `src_dec_dev/vc_mvp_dec_mc_adapter.v:34-104`, `src_dec_dev/vc_mvp_dec_neib_top.v:238-324`.
+
+    ![Overall hierarchy and ownership](fig1_avc_decoder_mvp_arch.svg)
+
+    ## 7. Static evidence table
+
+    | Finding | Repository evidence |
+    |---|---|
+    | Decoder top owns the complete path | `src_dec_dev/vc_mvp_dec_top.v:98-196` |
+    | Backend owns Neighbor, reconstruction, MC, and update adapters | `src_dec_dev/vc_mvp_dec_backend_top.v:101-228` |
+    | Real Neighbor hierarchy is instantiated | `src_dec_dev/vc_mvp_dec_neib_top.v:326-407` |
+    | Real Candidate core is instantiated | `src_dec_dev/vc_mvp_dec_cand.v:54-80` |
+    | Controller states are DEC_IDLE, DEC_NEIB, DEC_MVP, DEC_RECON, and DEC_SEND | `src_dec_dev/vc_mvp_dec_ctrl.v:56-62` |
+    | MC acknowledgement retires the transaction | `src_dec_dev/vc_mvp_dec_ctrl.v:147-151`; `src_dec_dev/vc_mvp_dec_mc_adapter.v:68-83` |
+    | Rolling update is handshake-qualified | `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54` |
+    | Neighbor ready and completion use the drain barrier | `src_dec_dev/vc_mvp_dec_neib_top.v:242-261`, `296-324` |
+
+    ## 8. Verification status
+
+    This document is aligned by static RTL inspection to baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`.
+
+    - T02 standalone real-Candidate execution remains externally simulator-blocked.
+    - T07 real-Candidate full-pipeline execution remains externally simulator-blocked.
+    - No final Candidate or full-pipeline PASS is claimed.
+    - No exact event counts or flush-cycle values are claimed.
+    - No runtime B0-over-B2 proof is claimed.
+    - No runtime Col or RefList request counts are claimed.
+    - Existing self-checking TBs remain verification evidence to be executed when a capable simulator is available.
+
+    ## 9. Generated artifacts
+
+    The generator produces this file, the canonical root pair `../AVC_Decoder_Only_Data_Flow_v1.svg` and `.png`, and these detailed pairs:
+
+    - `fig1_avc_decoder_mvp_arch.svg` and `.png`
+    - `fig2_p8_serial_neighbor_flow.svg` and `.png`
+    - `fig3_mode_mv_derivation.svg` and `.png`
+
+    The retired root mode diagram and the absent `spec_assets` namespace are not generated or canonical.
+    ''').strip() + "\n"
+
+
+def make_readme():
+    return dedent('''
+    AVC Decoder MVP Architecture Spec v0.1
+
+    Source of truth
+    ---------------
+    Run from the repository root:
+
+        python ref_material/avc_decoder_mvp_spec/gen_spec.py
+
+    The generator derives all output paths from its own repository location and writes only under ref_material/.
+
+    Canonical diagram
+    -----------------
+    ref_material/AVC_Decoder_Only_Data_Flow_v1.svg
+    ref_material/AVC_Decoder_Only_Data_Flow_v1.png
+
+    Generated files
+    ---------------
+    ref_material/avc_decoder_mvp_spec/AVC_Decoder_MVP_Architecture_Spec_v0.1.md
+    ref_material/avc_decoder_mvp_spec/fig1_avc_decoder_mvp_arch.svg
+    ref_material/avc_decoder_mvp_spec/fig1_avc_decoder_mvp_arch.png
+    ref_material/avc_decoder_mvp_spec/fig2_p8_serial_neighbor_flow.svg
+    ref_material/avc_decoder_mvp_spec/fig2_p8_serial_neighbor_flow.png
+    ref_material/avc_decoder_mvp_spec/fig3_mode_mv_derivation.svg
+    ref_material/avc_decoder_mvp_spec/fig3_mode_mv_derivation.png
+
+    Verification limitation
+    -----------------------
+    The documentation is statically aligned to baseline 3a124096. T02 standalone real-Candidate and T07 real-Candidate full-pipeline execution remain externally simulator-blocked; this documentation does not claim their PASS or closure.
+    ''').strip() + "\n"
+
+
+def main():
+    root_svg, root_w, root_h = make_root_diagram()
+    write_pair("AVC_Decoder_Only_Data_Flow_v1", root_svg, root_w, root_h)
+
+    fig1, fig1_w, fig1_h = make_fig1()
+    write_pair("avc_decoder_mvp_spec/fig1_avc_decoder_mvp_arch", fig1, fig1_w, fig1_h)
+
+    fig2, fig2_w, fig2_h = make_fig2()
+    write_pair("avc_decoder_mvp_spec/fig2_p8_serial_neighbor_flow", fig2, fig2_w, fig2_h)
+
+    fig3, fig3_w, fig3_h = make_fig3()
+    write_pair("avc_decoder_mvp_spec/fig3_mode_mv_derivation", fig3, fig3_w, fig3_h)
+
+    (SPEC_DIR / "AVC_Decoder_MVP_Architecture_Spec_v0.1.md").write_text(make_spec(), encoding="utf-8", newline="\n")
+    (SPEC_DIR / "README.txt").write_text(make_readme(), encoding="utf-8", newline="\n")
+    print("generated AVC Decoder MVP documentation under ref_material/")
+
+
+if __name__ == "__main__":
+    main()
