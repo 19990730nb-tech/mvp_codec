@@ -179,8 +179,8 @@ def make_root_diagram():
         (545, 150, 255, 180, ["vc_mvp_dec_neib_top", "vc_mvp_dec_neib_adapter", "real Neighbor hierarchy", "A/B snapshot and drain"], "reuse"),
         (840, 150, 255, 180, ["vc_mvp_dec_cand", "real vc_mvp_cand_gen", "A=A1  B=B1", "C=B0 then B2", "candidate0 only"], "reuse"),
         (1115, 150, 245, 180, ["vc_mvp_dec_recon", "signed 17-bit add", "P_SKIP zero rule", "final MV and ref_idx"], "decoder"),
-        (1380, 150, 255, 180, ["vc_mvp_dec_mc_adapter", "lane and packet select", "rdy stays asserted when ack is low", "dec_send"], "decoder"),
-        (1665, 150, 200, 145, ["MC / mrg2mc interface", "MC acknowledgement", "mc2mrg_cand_ack"], "external"),
+        (1380, 150, 255, 180, ["vc_mvp_dec_mc_adapter", "selected lane", "rdy/data held until ack", "dec_send"], "decoder"),
+        (1710, 150, 160, 145, ["MC / mrg2mc", "interface", "MC acknowledgement", "mc2mrg ack"], "external"),
     ]
     for x, y, w, h, labels, style in blocks:
         parts.append(box(x, y, w, h, labels, style))
@@ -191,7 +191,7 @@ def make_root_diagram():
         (800, 840, "capture"),
         (1095, 1115, "MVP"),
         (1360, 1380, "DEC_SEND"),
-        (1635, 1665, "dec_mrg2mc_cand_rdy/data"),
+        (1635, 1710, "rdy / data"),
     ]:
         parts.append(arrow(x1, 220, x2, 220))
         parts.append(note((x1 + x2) / 2, 205, label, "tiny"))
@@ -201,8 +201,8 @@ def make_root_diagram():
         "cur_cu_upd = mc_commit",
         "committed final MV / ref_idx / coordinates",
     ], "reuse"))
-    parts.append(arrow(1665, 270, 1635, 270, "feedback"))
-    parts.append(note(1650, 255, "mc2mrg_cand_ack", "tiny"))
+    parts.append(arrow(1710, 270, 1635, 270, "feedback"))
+    parts.append(note(1672, 255, "mc2mrg ack", "tiny"))
     parts.append(polyline([(1505, 330), (1505, 360), (1270, 360), (1270, 390)], "feedback"))
     parts.append(note(1385, 350, "mc_commit", "small"))
     parts.append(polyline([(585, 445), (500, 445), (500, 355), (675, 355), (675, 330)], "feedback"))
@@ -314,7 +314,7 @@ def make_fig3():
     parts.append(polyline([(790, 215), (830, 215), (830, 365), (870, 365)], "arrow"))
     parts.append(polyline([(790, 690), (830, 690), (830, 445), (870, 445)], "arrow"))
 
-    parts.append(box(1230, 310, 300, 190, ["common MC adapter", "P8 -> lane 0", "P16/P_SKIP -> lane 1", "lane 2 unused", "packet held while mc2mrg_cand_ack is low"], "decoder"))
+    parts.append(box(1230, 310, 300, 190, ["common MC adapter", "P8 -> lane 0", "P16/P_SKIP -> lane 1", "lane 2 unused", "rdy/data held stable", "until MC ack"], "decoder"))
     parts.append(arrow(1170, 405, 1230, 405))
     parts.append(box(1580, 310, 145, 190, ["retirement", "ack", "mc_commit", "done/update"], "reuse"))
     parts.append(arrow(1530, 405, 1580, 405))
