@@ -27,6 +27,6 @@ ref_material/avc_decoder_mvp_spec/fig2_p8_serial_neighbor_flow.png
 ref_material/avc_decoder_mvp_spec/fig3_mode_mv_derivation.svg
 ref_material/avc_decoder_mvp_spec/fig3_mode_mv_derivation.png
 
-Verification limitation
------------------------
-The documentation is statically aligned to baseline 3a124096. T02 standalone real-Candidate and T07 real-Candidate full-pipeline execution are pending execution on a capable VCS host; this documentation does not claim their PASS or closure.
+Verification record
+-------------------
+Phase-1 directed RTL verification for T02 and T07 is closed against RTL baseline 3a124096 using Synopsys VCS W-2024.09-SP2-2. T02 passed in normal and SYNTHESIS builds with 15 Candidate transactions in 396000 ps. T07 passed in normal and SYNTHESIS builds in 2076000 ps with accepted=17, candidate=16, recon_done=15, transfer=14, commit=14, done=14, update=14, lane_done={4,10,0}, Neighbor A=20, B=17, Col=0, and RefList=0. This is directed RTL verification only; it does not claim full-chip, bitstream-level, formal, coverage-closure, or production signoff.

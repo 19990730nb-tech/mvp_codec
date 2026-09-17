@@ -1,6 +1,6 @@
 # AVC Decoder MVP Architecture Spec v0.1
 
-> Status: **static RTL-aligned documentation for baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`**. T02 standalone real-Candidate execution and T07 real-Candidate full-pipeline execution are pending execution on a capable VCS host. No final Candidate or full-pipeline PASS is claimed.
+> Status: **Phase-1 directed RTL verification for T02 and T07 is closed** against RTL baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`, using Synopsys VCS W-2024.09-SP2-2. This record does not claim full-chip, bitstream-level, formal, coverage-closure, or production signoff.
 
 ## 0. Source of truth and scope
 
@@ -156,17 +156,40 @@ Evidence: `src_dec_dev/vc_mvp_dec_ctrl.v:157-190`, `src_dec_dev/vc_mvp_dec_cand.
 | Rolling update is handshake-qualified | `src_dec_dev/vc_mvp_dec_upd_adapter.v:27-54` |
 | Neighbor ready and completion use the drain barrier | `src_dec_dev/vc_mvp_dec_neib_top.v:242-261`, `296-324` |
 
-## 8. Verification status
+## 8. Verification record
 
-This document is aligned by static RTL inspection to baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7`.
+Phase-1 directed RTL verification for T02 and T07 is closed against RTL baseline `3a124096f71b3a6c9ccf04fab52b48f8db8f4ed7` using Synopsys VCS W-2024.09-SP2-2.
 
-- T02 standalone real-Candidate execution is pending execution on a capable VCS host.
-- T07 real-Candidate full-pipeline execution is pending execution on a capable VCS host.
-- No final Candidate or full-pipeline PASS is claimed.
-- No exact event counts or flush-cycle values are claimed.
-- No runtime B0-over-B2 proof is claimed.
-- No runtime Col or RefList request counts are claimed.
-- Existing self-checking TBs remain verification evidence to be executed when a capable simulator is available.
+### T02 standalone real Candidate
+
+- Normal build: PASS, 15 Candidate transactions, 396000 ps.
+- `+define+SYNTHESIS`: PASS, 15 Candidate transactions, 396000 ps.
+- Normal CASE 18 emitted exactly one expected overlapping-start `$error` diagnostic.
+- `SYNTHESIS` removed that diagnostic as intended.
+- Runtime checks covered B0-over-B2 priority, signed MED, only-A1/B1/B0/B2 selection, P8/P16, and P_SKIP spatial selection.
+
+### T07 real-Candidate full pipeline
+
+- Normal build: PASS, 2076000 ps.
+- `+define+SYNTHESIS`: PASS, 2076000 ps.
+- Results were identical in both builds.
+
+| Event or request | Verified result |
+|---|---:|
+| accepted | 17 |
+| candidate | 16 |
+| recon_done | 15 |
+| transfer | 14 |
+| commit | 14 |
+| done | 14 |
+| update | 14 |
+| lane_done | `{4,10,0}` |
+| Neighbor A requests | 20 |
+| Neighbor B requests | 17 |
+| Col requests | 0 |
+| RefList requests | 0 |
+
+Cases A-I covered Candidate behavior, signed reconstruction, P8 serial rolling updates, P_SKIP, MC backpressure, flush cancellation, and stale-ack rejection. These are directed RTL results; this record does not claim full-chip, bitstream-level, formal, coverage-closure, or production signoff.
 
 ## 9. Generated artifacts
 
