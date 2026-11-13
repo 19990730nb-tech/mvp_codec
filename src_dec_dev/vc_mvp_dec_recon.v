@@ -31,12 +31,12 @@ module vc_mvp_dec_recon (
     wire signed [16:0] sum_x_17 = mvp_x_17 + mvd_x_17;
     wire signed [16:0] sum_y_17 = mvp_y_17 + mvd_y_17;
 
-    wire skip_zero_motion =
-        dec_is_pic_top16 ||
-        dec_is_pic_left16 ||
-        (dec_skip_b1_avail && (dec_skip_b1_mv == 32'd0)) ||
-        (dec_skip_a1_avail && (dec_skip_a1_mv == 32'd0));
-
+    // P_SKIP (user ruling 2026-10-20): the CCU only flags the skip mode;
+    // the MV is still the MVP's own three-branch median prediction with
+    // mvd == 0 — identical to P16 except that mvd is hard-wired to zero.
+    // No zero-motion special case: the golden Merge mvl is the C-model
+    // find_skip value and is Not the decoder's reconstruction semantic.
+    
     // At decoder-top integration, derive the picture-boundary flags from
     // accepted, latched transaction coordinates, matching ve_mvp_top.v:
     // dec_is_pic_top16  = ({dec_ctuy_q, dec_cuy[2:1]} == 0);
@@ -62,7 +62,7 @@ module vc_mvp_dec_recon (
             recon_done <= 1'b0;
             if (dec_recon_start) begin
                 if (dec_is_skip) begin
-                    dec_final_mv <= skip_zero_motion ? 32'd0 : dec_spatial_mvp;
+                    dec_final_mv <= dec_spatial_mvp;
                     dec_final_ref_idx <= 4'd0;
                 end
                 else begin
